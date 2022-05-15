@@ -1,19 +1,126 @@
-cmake_minimum_required(VERSION 3.8)
-project(HTTPRequest CXX)
+# -----------------------------------------------------------------------------
+# @brief  : Root cmake file.
+# @author : Enrico Fraccaroli
+# @create : 03/01/2022
+# @update : 03/01/2022
+# -----------------------------------------------------------------------------
 
-# Header only library will be interface. All properties get passed to targets that 'link' to it
-add_library(HTTPRequest INTERFACE)
-target_compile_features(HTTPRequest INTERFACE cxx_std_17)
+# -----------------------------------------------------------------------------
+# Set the minimum CMake version, the project name and default build type.
+# -----------------------------------------------------------------------------
+cmake_minimum_required(VERSION 3.1)
 
-target_include_directories(HTTPRequest
-  INTERFACE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-)
+# Set the project name.
+project(minihttp CXX)
 
-# Optionally build unit tests
-option(BUILD_TESTING "Build Unit Tests" OFF)
-if (BUILD_TESTING)
-  enable_testing()
-  add_subdirectory(tests)
+# Set C++ Standard.
+set(CMAKE_CXX_STANDARD 98)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/")
+
+# -----------------------------------------------------------------------------
+# Add options.
+# -----------------------------------------------------------------------------
+option(MBEDTLS_SUPPORT "Enable MbedTLS support" OFF)
+option(STRICT_WARNINGS "Enable strict compiler warnings" ON)
+option(WARNINGS_AS_ERRORS "Treat all warnings as errors" OFF)
+option(BUILD_EXAMPLES "Build examples" OFF)
+
+# -----------------------------------------------------------------------------
+# LIBRARY
+# -----------------------------------------------------------------------------
+# Add the C++ library.
+add_library(${PROJECT_NAME} INTERFACE)
+add_library(${PROJECT_NAME}::${PROJECT_NAME} ALIAS ${PROJECT_NAME})
+# Inlcude header directories.
+target_include_directories(${PROJECT_NAME} INTERFACE ${PROJECT_SOURCE_DIR}/include)
+if(WIN32)
+    target_link_libraries(${PROJECT_NAME} INTERFACE ws2_32)
 endif()
 
+# -----------------------------------------------------------------------------
+# DEPENDENCIES
+# -----------------------------------------------------------------------------
+if(MBEDTLS_SUPPORT)
+    find_package(mbedtls REQUIRED)
+    # Inlcude header directories.
+    target_include_directories(${PROJECT_NAME} INTERFACE ${MBEDTLS_INCLUDE_DIRS})
+    # Link libraries.
+    target_link_libraries(${PROJECT_NAME} INTERFACE mbedtls mbedx509 mbedcrypto)
+    # Add definition.
+    target_compile_definitions(${PROJECT_NAME} INTERFACE MBEDTLS_ENABLED)
+endif()
+
+# -----------------------------------------------------------------------------
+# Set the compilation flags.
+# -----------------------------------------------------------------------------
+if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
+    # Disable warnings that suggest using MSVC-specific safe functions
+    target_compile_definitions(${PROJECT_NAME} INTERFACE _CRT_SECURE_NO_WARNINGS)
+    if(WARNINGS_AS_ERRORS)
+        target_compile_options(${PROJECT_NAME} INTERFACE /WX)
+    endif()
+elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    if(WARNINGS_AS_ERRORS)
+        target_compile_options(${PROJECT_NAME} INTERFACE -Werror)
+    endif()
+endif()
+
+if(STRICT_WARNINGS)
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
+        # Mark system headers as external for MSVC explicitly
+        # https://devblogs.microsoft.com/cppblog/broken-warnings-theory
+        target_compile_options(${PROJECT_NAME} INTERFACE /experimental:external)
+        target_compile_options(${PROJECT_NAME} INTERFACE /external:I ${CMAKE_BINARY_DIR})
+        target_compile_options(${PROJECT_NAME} INTERFACE /external:anglebrackets)
+        target_compile_options(${PROJECT_NAME} INTERFACE /external:W0)
+
+        target_compile_options(${PROJECT_NAME} INTERFACE /W4)
+    elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        target_compile_options(${PROJECT_NAME} INTERFACE -Wall -Wextra -Wconversion -pedantic)
+    endif()
+endif()
+
+# -----------------------------------------------------------------------------
+# DOCUMENTATION
+# -----------------------------------------------------------------------------
+find_package(Doxygen)
+if(DOXYGEN_FOUND)
+    # Doxygen theme
+    include(FetchContent)
+
+    message(STATUS "Retrieving `doxygen-awesome-css`...")
+    FetchContent_Declare(
+        doxygenawesome
+        GIT_REPOSITORY https://github.com/jothepro/doxygen-awesome-css
+        GIT_TAG 4cd62308d825fe0396d2f66ffbab45d0e247724c # 2.0.3
+    )
+    FetchContent_GetProperties(doxygenawesome)
+    if(NOT doxygenawesome_POPULATED)
+        FetchContent_MakeAvailable(doxygenawesome)
+    endif()
+
+    set(DOXYGEN_USE_MDFILE_AS_MAINPAGE README.md)
+    set(DOXYGEN_GENERATE_TREEVIEW YES)
+    set(DOXYGEN_HTML_HEADER ${doxygenawesome_SOURCE_DIR}/doxygen-custom/header.html)
+    set(DOXYGEN_HTML_EXTRA_STYLESHEET ${doxygenawesome_SOURCE_DIR}/doxygen-awesome.css)
+    set(DOXYGEN_HTML_EXTRA_FILES
+        ${doxygenawesome_SOURCE_DIR}/doxygen-awesome-fragment-copy-button.js
+        ${doxygenawesome_SOURCE_DIR}/doxygen-awesome-paragraph-link.js
+        ${doxygenawesome_SOURCE_DIR}/doxygen-awesome-darkmode-toggle.js
+    )
+
+    doxygen_add_docs(${PROJECT_NAME}_documentation
+        include/minihttp.hpp
+        README.md
+    )
+endif()
+
+# -----------------------------------------------------------------------------
+# Examples
+# -----------------------------------------------------------------------------
+if(BUILD_EXAMPLES)
+    add_subdirectory(example)
+endif()
