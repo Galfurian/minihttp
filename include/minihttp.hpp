@@ -16,6 +16,7 @@
 #include <string>
 #include <vector>
 #include <sstream>
+#include <cstdarg>
 #include <ctime>
 #include <sys/time.h>
 
@@ -47,6 +48,12 @@ extern "C" char *_strdup(const char *strSource);
 #include <sys/types.h>
 #include <unistd.h>
 #endif // defined(_WIN32) || defined(__CYGWIN__)
+
+#include <mbedtls/ctr_drbg.h>
+#include <mbedtls/entropy.h>
+#include <mbedtls/net_sockets.h>
+#include <mbedtls/ssl.h>
+#include <mbedtls/error.h>
 
 namespace http
 {
@@ -102,6 +109,11 @@ class SystemError : public std::runtime_error {
 public:
     SystemError(int _error, const std::string &__arg)
         : std::runtime_error(__arg + " : " + detail::getLastErrorStr(_error))
+    {
+        // Nothing to do.
+    }
+    SystemError(const std::string &_error, const std::string &__arg)
+        : std::runtime_error(__arg + " : " + _error)
     {
         // Nothing to do.
     }
@@ -235,20 +247,20 @@ struct Status {
         NetworkAuthenticationRequired = 511
     };
 
-    HttpVersion httpVersion;
+    HttpVersion http_version;
     uint16_t code;
     std::string reason;
 
     Status()
-        : httpVersion(),
+        : http_version(),
           code(),
           reason()
     {
         // Nothing to do.
     }
 
-    Status(HttpVersion _httpVersion, uint16_t _code, std::string _reason)
-        : httpVersion(_httpVersion),
+    Status(HttpVersion _http_version, uint16_t _code, std::string _reason)
+        : http_version(_http_version),
           code(_code),
           reason(_reason)
     {
@@ -261,16 +273,109 @@ typedef std::vector<HeaderField> HeaderFields;
 
 struct Response {
     Status status;
-    HeaderFields headerFields;
+    HeaderFields header_fields;
     std::vector<uint8_t> body;
 };
 
+namespace logging
+{
+
+#define CONSOLE_RST "\x1B[0m" ///< Reset: turn off all attributes.
+#define CONSOLE_BLD "\x1B[1m" ///< Bold or bright.
+#define CONSOLE_ITA "\x1B[2m" ///< Italic.
+#define CONSOLE_UND "\x1B[4m" ///< Underlined.
+
+#define CONSOLE_RED "\x1B[31m" ///< Sets color to RED.
+#define CONSOLE_GRN "\x1B[32m" ///< Sets color to GREEN.
+#define CONSOLE_YEL "\x1B[33m" ///< Sets color to YELLOW.
+#define CONSOLE_BLU "\x1B[34m" ///< Sets color to BLUE.
+#define CONSOLE_MAG "\x1B[35m" ///< Sets color to MAGENTA.
+#define CONSOLE_CYN "\x1B[36m" ///< Sets color to CYAN.
+#define CONSOLE_WHT "\x1B[37m" ///< Sets color to WHITE.
+
+inline const char *get_date_time()
+{
+    static char buffer[80];
+    time_t now = time(0);
+    struct tm tstruct;
+    tstruct = *localtime(&now);
+    strftime(buffer, sizeof(buffer), "%X", &tstruct);
+    return buffer;
+}
+
+#ifndef NDEBUG
+inline void debug(const char *format, ...)
+{
+    va_list args;
+    fputs(CONSOLE_CYN, stdout);
+    fputs("[", stdout);
+    fputs(get_date_time(), stdout);
+    fputs("] ", stdout);
+    va_start(args, format);
+    vfprintf(stdout, format, args);
+    va_end(args);
+    fputs(CONSOLE_RST, stdout);
+}
+#else
+#define debug(...)
+#endif
+
+inline void info(const char *format, ...)
+{
+    va_list args;
+    fputs(CONSOLE_WHT, stdout);
+    fputs("[", stdout);
+    fputs(get_date_time(), stdout);
+    fputs("] ", stdout);
+    va_start(args, format);
+    vfprintf(stdout, format, args);
+    va_end(args);
+    fputs(CONSOLE_RST, stdout);
+}
+
+inline void warning(const char *format, ...)
+{
+    va_list args;
+    fputs(CONSOLE_YEL, stdout);
+    fputs("[", stdout);
+    fputs(get_date_time(), stdout);
+    fputs("] ", stdout);
+    va_start(args, format);
+    vfprintf(stdout, format, args);
+    va_end(args);
+    fputs(CONSOLE_RST, stdout);
+}
+
+inline void error(const char *format, ...)
+{
+    va_list args;
+    fputs(CONSOLE_RED, stderr);
+    fputs("[", stdout);
+    fputs(get_date_time(), stdout);
+    fputs("] ", stdout);
+    va_start(args, format);
+    vfprintf(stderr, format, args);
+    va_end(args);
+    fputs(CONSOLE_RST, stderr);
+}
+
+} // namespace logging
+
 namespace detail
 {
+
+const char *mbedt_get_errstr(int err)
+{
+    static char error_text[256];
+    mbedtls_strerror(err, error_text, sizeof(error_text));
+    return error_text;
+}
+
 #if defined(_WIN32) || defined(__CYGWIN__)
 class WinSock {
 public:
     WinSock()
+        : started()
     {
         WSADATA wsaData;
         const auto error = WSAStartup(MAKEWORD(2, 2), &wsaData);
@@ -281,7 +386,6 @@ public:
             WSACleanup();
             throw std::runtime_error("Invalid WinSock version");
         }
-
         started = true;
     }
 
@@ -313,6 +417,80 @@ private:
 };
 #endif // defined(_WIN32) || defined(__CYGWIN__)
 
+static inline void _traceprint_ssl(void *, int level, const char *file, int line, const char *str)
+{
+    printf("ssl(%s:%04d) [%d] %s\n", file, line, level, str);
+}
+
+class SSLContext {
+public:
+    mbedtls_entropy_context entropy;
+    mbedtls_ctr_drbg_context ctr_drbg;
+    mbedtls_ssl_context ssl;
+    mbedtls_x509_crt cacert;
+    mbedtls_ssl_config conf;
+
+    SSLContext()
+        : entropy(),
+          ctr_drbg(),
+          ssl(),
+          cacert(),
+          conf()
+    {
+        mbedtls_entropy_init(&entropy);
+        mbedtls_x509_crt_init(&cacert);
+        mbedtls_ssl_init(&ssl);
+        mbedtls_ctr_drbg_init(&ctr_drbg);
+        mbedtls_ssl_config_init(&conf);
+    }
+
+    ~SSLContext()
+    {
+        mbedtls_entropy_free(&entropy);
+        mbedtls_x509_crt_free(&cacert);
+        mbedtls_ssl_free(&ssl);
+        mbedtls_ctr_drbg_free(&ctr_drbg);
+        mbedtls_ssl_config_free(&conf);
+    }
+
+    void init(const std::string &certs)
+    {
+        const char *pers = "minihttp";
+        int err_code;
+        // The CTR_DRBG context to seed.
+        err_code = mbedtls_ctr_drbg_seed(&ctr_drbg, mbedtls_entropy_func, &entropy, reinterpret_cast<const unsigned char *>(pers), strlen(pers) + 1);
+        if (err_code != 0)
+            throw SystemError(detail::mbedt_get_errstr(err_code), "Failed to call ctr_drbg_seed");
+        // Parse the certificates and add them to the chained list.
+        if (!certs.empty()) {
+            err_code = mbedtls_x509_crt_parse(&cacert, reinterpret_cast<const unsigned char *>(certs.c_str()), certs.size());
+            if (err_code != 0)
+                throw SystemError(detail::mbedt_get_errstr(err_code), "Failed to call x509_crt_parse");
+        }
+        err_code = mbedtls_ssl_config_defaults(&conf, MBEDTLS_SSL_IS_CLIENT, MBEDTLS_SSL_TRANSPORT_STREAM, MBEDTLS_SSL_PRESET_DEFAULT);
+        if (err_code != 0)
+            throw SystemError(detail::mbedt_get_errstr(err_code), "Failed to call ssl_config_defaults");
+
+        mbedtls_ssl_conf_authmode(&conf, MBEDTLS_SSL_VERIFY_OPTIONAL);
+        mbedtls_ssl_conf_ca_chain(&conf, &cacert, NULL);
+
+        /* SSLv3 is deprecated, set minimum to TLS 1.0 */
+        mbedtls_ssl_conf_min_version(&conf, MBEDTLS_SSL_MAJOR_VERSION_3, MBEDTLS_SSL_MINOR_VERSION_1);
+
+        mbedtls_ssl_conf_rng(&conf, mbedtls_ctr_drbg_random, &ctr_drbg);
+        mbedtls_ssl_conf_dbg(&conf, _traceprint_ssl, NULL);
+
+        err_code = mbedtls_ssl_setup(&ssl, &conf);
+        if (err_code != 0)
+            throw SystemError(detail::mbedt_get_errstr(err_code), "Failed to call ssl_setup");
+    }
+
+    void reset()
+    {
+        mbedtls_ssl_session_reset(&ssl);
+    }
+};
+
 class Socket {
 public:
 #if defined(_WIN32) || defined(__CYGWIN__)
@@ -324,43 +502,23 @@ public:
 #endif // defined(_WIN32) || defined(__CYGWIN__)
 
     Socket()
-        : endpoint(invalid)
+        : endpoint(invalid),
+          internet_protocol(InternetProtocol::V4),
+          sslctx(),
+          certs(),
+          use_ssl()
     {
         // Nothing to do.
     }
 
-    Socket(const InternetProtocol internetProtocol)
-        : endpoint(socket(internetProtocol.getAddressFamily(), SOCK_STREAM, IPPROTO_TCP))
+    Socket(const InternetProtocol _internet_protocol)
+        : endpoint(),
+          internet_protocol(_internet_protocol),
+          sslctx(),
+          certs(),
+          use_ssl()
     {
-        if (endpoint == invalid)
-            throw SystemError(getLastError(), "Failed to create socket");
-
-#if defined(_WIN32) || defined(__CYGWIN__)
-        ULONG mode = 1;
-        if (ioctlsocket(endpoint, FIONBIO, &mode) != 0) {
-            this->close();
-            throw SystemError(detail::getLastError(), "Failed to get socket flags");
-        }
-#else
-        const int flags = fcntl(endpoint, F_GETFL);
-        if (flags == -1) {
-            this->close();
-            throw SystemError(detail::getLastError(), "Failed to get socket flags");
-        }
-
-        if (fcntl(endpoint, F_SETFL, flags | O_NONBLOCK) == -1) {
-            this->close();
-            throw SystemError(detail::getLastError(), "Failed to set socket flags");
-        }
-#endif // defined(_WIN32) || defined(__CYGWIN__)
-
-#ifdef __APPLE__
-        const int value = 1;
-        if (setsockopt(endpoint, SOL_SOCKET, SO_NOSIGPIPE, &value, sizeof(value)) == -1) {
-            this->close();
-            throw SystemError(detail::getLastError(), "Failed to set socket option");
-        }
-#endif // __APPLE__
+        // Nothing to do.
     }
 
     ~Socket()
@@ -370,7 +528,11 @@ public:
     }
 
     Socket(Socket &other)
-        : endpoint(other.endpoint)
+        : endpoint(other.endpoint),
+          internet_protocol(other.internet_protocol),
+          sslctx(other.sslctx),
+          certs(other.certs),
+          use_ssl(other.use_ssl)
     {
         other.endpoint = invalid;
     }
@@ -381,19 +543,45 @@ public:
             return *this;
         if (endpoint != invalid)
             this->close();
-        endpoint       = other.endpoint;
-        other.endpoint = invalid;
+        endpoint          = other.endpoint;
+        internet_protocol = other.internet_protocol;
+        sslctx            = other.sslctx;
+        certs             = other.certs;
+        use_ssl           = other.use_ssl;
+        other.endpoint    = invalid;
         return *this;
     }
 
-    void connect(const struct sockaddr *address, const socklen_t addressSize, const int64_t timeout)
+    inline void setCerts(const std::string &_certs)
     {
-#if defined(_WIN32) || defined(__CYGWIN__)
-        auto result = ::connect(endpoint, address, addressSize);
-        while (result == -1 && WSAGetLastError() == WSAEINTR)
-            result = ::connect(endpoint, address, addressSize);
+        certs = _certs;
+    }
 
-        if (result == -1) {
+    void connect(const Uri &uri, const struct sockaddr *address, const socklen_t addressSize, const int64_t timeout)
+    {
+        int err_code;
+        if (uri.scheme == "http") {
+            use_ssl = false;
+        } else if (uri.scheme == "https") {
+            use_ssl = true;
+        } else {
+            throw std::runtime_error("Unsupported scheme");
+        }
+
+#ifdef __APPLE__
+        const int value = 1;
+        if (setsockopt(endpoint, SOL_SOCKET, SO_NOSIGPIPE, &value, sizeof(value)) == -1) {
+            this->close();
+            throw SystemError(detail::getLastError(), "Failed to set socket option");
+        }
+#endif // __APPLE__
+
+#if defined(_WIN32) || defined(__CYGWIN__)
+        auto err_code = ::connect(endpoint, address, addressSize);
+        while (err_code == -1 && WSAGetLastError() == WSAEINTR)
+            err_code = ::connect(endpoint, address, addressSize);
+
+        if (err_code == -1) {
             if (WSAGetLastError() == WSAEWOULDBLOCK) {
                 select(SelectType::write, timeout);
 
@@ -411,76 +599,169 @@ public:
                 throw SystemError(detail::getLastError(), "Failed to connect");
         }
 #else
-        int result = ::connect(endpoint, address, addressSize);
-        while (result == -1 && errno == EINTR)
-            result = ::connect(endpoint, address, addressSize);
+        if (use_ssl) {
+            // Initialize a context.
+            mbedtls_net_init((mbedtls_net_context *)&endpoint);
 
-        if (result == -1) {
-            if (errno == EINPROGRESS) {
-                select(SelectType::write, timeout);
-                int socketError;
-                socklen_t optionLength = sizeof(socketError);
-                if (getsockopt(endpoint, SOL_SOCKET, SO_ERROR, &socketError, &optionLength) == -1)
-                    throw SystemError(errno, "Failed to get socket option");
-                if (socketError != 0)
-                    throw SystemError(socketError, "Failed to connect (getsockopt)");
-            } else
-                throw SystemError(errno, "Failed to connect (connect)");
+            sslctx.init(certs);
+
+            //  Initiate a connection with host:port in the given protocol.
+            err_code = mbedtls_net_connect(
+                reinterpret_cast<mbedtls_net_context *>(&endpoint),
+                uri.host.c_str(), uri.port.c_str(), MBEDTLS_NET_PROTO_TCP);
+            if (err_code != 0)
+                throw SystemError(detail::mbedt_get_errstr(err_code), "Failed to create SSL socket");
+
+            mbedtls_ssl_set_bio(&sslctx.ssl, (mbedtls_net_context *)&endpoint, mbedtls_net_send, mbedtls_net_recv, NULL);
+
+            // Perform the SSL handshake.
+            do {
+                err_code = mbedtls_ssl_handshake(&sslctx.ssl);
+            } while ((err_code != 0) && ((err_code == MBEDTLS_ERR_SSL_WANT_READ) || (err_code == MBEDTLS_ERR_SSL_WANT_WRITE)));
+
+            if (err_code != 0)
+                throw SystemError(detail::mbedt_get_errstr(err_code), "Failed to call ssl_handshake");
+        } else {
+            // Open the endpoint.
+            endpoint = socket(internet_protocol.getAddressFamily(), SOCK_STREAM, IPPROTO_TCP);
+            // Connect.
+            do {
+                err_code = ::connect(endpoint, address, addressSize);
+            } while ((err_code == -1) && (errno == EINTR));
+            // Check if we successfully connected.
+            if (err_code == -1) {
+                if (errno == EINPROGRESS) {
+                    this->select(SelectType::write, timeout);
+                    int socketError;
+                    socklen_t optionLength = sizeof(socketError);
+                    if (getsockopt(endpoint, SOL_SOCKET, SO_ERROR, &socketError, &optionLength) == -1)
+                        throw SystemError(errno, "Failed to get socket option");
+                    if (socketError != 0)
+                        throw SystemError(socketError, "Failed to connect (getsockopt)");
+                } else {
+                    throw SystemError(errno, "Failed to connect (connect)");
+                }
+            }
+
+            if (endpoint == invalid)
+                throw SystemError(detail::getLastError(), "Failed to create socket");
+        }
+
+        // ====================================================================
+        // NON-BLOCKING
+        // ====================================================================
+#if defined(_WIN32) || defined(__CYGWIN__)
+        ULONG tmp = !!nonblock;
+        if (::ioctlsocket(s, FIONBIO, &tmp) == SOCKET_ERROR) {
+            this->close();
+            throw SystemError(detail::getLastError(), "Failed to set socket non-blocking");
+        }
+#else
+        if (use_ssl) {
+            // Set the socket non - blocking.
+            err_code = mbedtls_net_set_nonblock((mbedtls_net_context *)&endpoint);
+            if (err_code != 0)
+                throw SystemError(detail::mbedt_get_errstr(err_code), "Failed to set socket non-blocking");
+        } else {
+            int flags;
+            if ((flags = ::fcntl(endpoint, F_GETFL)) < 0)
+                throw SystemError(detail::getLastError(), "Failed to set socket non-blocking");
+            if (::fcntl(endpoint, F_SETFL, flags | O_NONBLOCK) == -1)
+                throw SystemError(detail::getLastError(), "Failed to set socket non-blocking");
+        }
+#endif
+
+        // ====================================================================
+        // TIMEOUT
+        // ====================================================================
+        if (timeout > 0) {
+            struct timeval timeval_timeout;
+            timeval_timeout.tv_sec  = static_cast<time_t>(timeout / 1000);
+            timeval_timeout.tv_usec = static_cast<suseconds_t>((timeout % 1000) * 1000);
+            if (setsockopt(endpoint, SOL_SOCKET, SO_RCVTIMEO, &timeval_timeout, sizeof(timeval_timeout)) < 0)
+                throw SystemError(errno, "Failed to set RCV timeout");
+            if (setsockopt(endpoint, SOL_SOCKET, SO_SNDTIMEO, &timeval_timeout, sizeof(timeval_timeout)) < 0)
+                throw SystemError(errno, "Failed to set SND timeout");
         }
 #endif // defined(_WIN32) || defined(__CYGWIN__)
     }
 
     std::size_t send(const void *buffer, const std::size_t length, const int64_t timeout)
     {
-        select(SelectType::write, timeout);
+        ssize_t result;
 #if defined(_WIN32) || defined(__CYGWIN__)
-        auto result = ::send(endpoint, reinterpret_cast<const char *>(buffer),
-                             static_cast<int>(length), 0);
-
-        while (result == -1 && WSAGetLastError() == WSAEINTR)
-            result = ::send(endpoint, reinterpret_cast<const char *>(buffer),
-                            static_cast<int>(length), 0);
-
-        if (result == -1)
-            throw SystemError(detail::getLastError(), "Failed to send data");
+        this->select(SelectType::write, timeout);
+        do {
+            result = ::send(endpoint, reinterpret_cast<const char *>(buffer), static_cast<int>(length), 0);
+        } while ((result == -1) && (detail::getLastError() == WSAEINTR));
 #else
-        ssize_t result = ::send(endpoint, reinterpret_cast<const char *>(buffer),
-                                length, noSignal);
-
-        while (result == -1 && errno == EINTR)
-            result = ::send(endpoint, reinterpret_cast<const char *>(buffer),
-                            length, noSignal);
-
-        if (result == -1)
-            throw SystemError(detail::getLastError(), "Failed to send data");
+        if (use_ssl) {
+            do {
+                result = mbedtls_ssl_write(&sslctx.ssl, reinterpret_cast<const unsigned char *>(buffer), length);
+            } while (result == MBEDTLS_ERR_SSL_WANT_WRITE);
+        } else {
+            this->select(SelectType::write, timeout);
+            do {
+                result = ::send(endpoint, reinterpret_cast<const char *>(buffer), length, noSignal);
+            } while ((result == -1) && (detail::getLastError() == EINTR));
+        }
 #endif // defined(_WIN32) || defined(__CYGWIN__)
+
+        if (result < 0) {
+            if (use_ssl) {
+                throw SystemError(detail::mbedt_get_errstr(static_cast<int>(result)), "Failed to send data");
+            } else {
+                throw SystemError(detail::getLastError(), "Failed to send data");
+            }
+        }
         return static_cast<std::size_t>(result);
     }
 
     std::size_t recv(void *buffer, const std::size_t length, const int64_t timeout)
     {
-        select(SelectType::read, timeout);
+        ssize_t result;
 #if defined(_WIN32) || defined(__CYGWIN__)
-        auto result = ::recv(endpoint, reinterpret_cast<char *>(buffer),
-                             static_cast<int>(length), 0);
-
-        while (result == -1 && WSAGetLastError() == WSAEINTR)
-            result = ::recv(endpoint, reinterpret_cast<char *>(buffer),
-                            static_cast<int>(length), 0);
-
-        if (result == -1)
-            throw SystemError(detail::getLastError(), "Failed to read data");
+        this->select(SelectType::read, timeout);
+        do {
+            result = ::recv(endpoint, reinterpret_cast<char *>(buffer), static_cast<int>(length), 0);
+        } while (result == -1 && WSAGetLastError() == WSAEINTR);
 #else
-        ssize_t result = ::recv(endpoint, reinterpret_cast<char *>(buffer),
-                                length, noSignal);
-
-        while (result == -1 && errno == EINTR)
-            result = ::recv(endpoint, reinterpret_cast<char *>(buffer),
-                            length, noSignal);
-
-        if (result == -1)
-            throw SystemError(detail::getLastError(), "Failed to read data");
+        if (use_ssl) {
+            do {
+                result = mbedtls_ssl_read(&sslctx.ssl, reinterpret_cast<unsigned char *>(buffer), length);
+            } while (result == MBEDTLS_ERR_SSL_WANT_READ);
+        } else {
+            this->select(SelectType::read, timeout);
+            do {
+                result = ::recv(endpoint, reinterpret_cast<char *>(buffer), length, noSignal);
+            } while ((result == -1) && (detail::getLastError() == EINTR));
+        }
 #endif // defined(_WIN32) || defined(__CYGWIN__)
+        if (result < 0) {
+            switch (result) {
+            case EWOULDBLOCK:
+#if defined(EAGAIN) && (EWOULDBLOCK != EAGAIN)
+            case EAGAIN: // linux man pages say this can also happen instead of EWOULDBLOCK
+#endif
+                return 0;
+            case ECONNRESET:
+            case ENOTCONN:
+            case ETIMEDOUT:
+#ifdef _WIN32
+            case WSAECONNABORTED:
+            case WSAESHUTDOWN:
+#endif
+                this->close();
+                break;
+            default:
+                if (use_ssl) {
+                    throw SystemError(detail::mbedt_get_errstr(static_cast<int>(result)), "Failed to read data");
+                } else {
+                    throw SystemError(detail::getLastError(), "Failed to read data");
+                }
+            }
+        }
+
         return static_cast<std::size_t>(result);
     }
 
@@ -505,47 +786,35 @@ private:
         fd_set descriptorSet;
         FD_ZERO(&descriptorSet);
         FD_SET(endpoint, &descriptorSet);
+        int count;
 
 #if defined(_WIN32) || defined(__CYGWIN__)
-        TIMEVAL selectTimeout{
+        TIMEVAL select_timeout{
             static_cast<LONG>(timeout / 1000),
             static_cast<LONG>((timeout % 1000) * 1000)
         };
-        auto count = ::select(0,
-                              (type == SelectType::read) ? &descriptorSet : NULL,
-                              (type == SelectType::write) ? &descriptorSet : NULL,
-                              NULL,
-                              (timeout >= 0) ? &selectTimeout : NULL);
-
-        while (count == -1 && WSAGetLastError() == WSAEINTR)
+        do {
             count = ::select(0,
                              (type == SelectType::read) ? &descriptorSet : NULL,
                              (type == SelectType::write) ? &descriptorSet : NULL,
                              NULL,
-                             (timeout >= 0) ? &selectTimeout : NULL);
-
+                             (timeout >= 0) ? &select_timeout : NULL);
+        } while ((count == -1) && (WSAGetLastError() == WSAEINTR));
         if (count == -1)
             throw SystemError(detail::getLastError(), "Failed to select socket");
         else if (count == 0)
             throw ResponseError("Request timed out");
 #else
-        timeval selectTimeout;
-        selectTimeout.tv_sec  = static_cast<time_t>(timeout / 1000);
-        selectTimeout.tv_usec = static_cast<suseconds_t>((timeout % 1000) * 1000);
-
-        int count = ::select(endpoint + 1,
-                             (type == SelectType::read) ? &descriptorSet : NULL,
-                             (type == SelectType::write) ? &descriptorSet : NULL,
-                             NULL,
-                             (timeout >= 0) ? &selectTimeout : NULL);
-
-        while (count == -1 && errno == EINTR)
+        timeval select_timeout;
+        select_timeout.tv_sec  = static_cast<time_t>(timeout / 1000);
+        select_timeout.tv_usec = static_cast<suseconds_t>((timeout % 1000) * 1000);
+        do {
             count = ::select(endpoint + 1,
                              (type == SelectType::read) ? &descriptorSet : NULL,
                              (type == SelectType::write) ? &descriptorSet : NULL,
                              NULL,
-                             (timeout >= 0) ? &selectTimeout : NULL);
-
+                             (timeout >= 0) ? &select_timeout : NULL);
+        } while ((count == -1) && (errno == EINTR));
         if (count == -1)
             throw SystemError(detail::getLastError(), "Failed to select socket");
         else if (count == 0)
@@ -555,11 +824,16 @@ private:
 
     void close()
     {
+        if (use_ssl) {
+            sslctx.reset();
+            mbedtls_net_free((mbedtls_net_context *)&endpoint);
+        } else {
 #if defined(_WIN32) || defined(__CYGWIN__)
-        closesocket(endpoint);
+            closesocket(endpoint);
 #else
-        ::close(endpoint);
+            ::close(endpoint);
 #endif // defined(_WIN32) || defined(__CYGWIN__)
+        }
     }
 
 #if defined(__unix__) && !defined(__APPLE__) && !defined(__CYGWIN__)
@@ -569,6 +843,10 @@ private:
 #endif // defined(__unix__) && !defined(__APPLE__)
 
     Type endpoint;
+    InternetProtocol internet_protocol;
+    SSLContext sslctx;
+    std::string certs;
+    bool use_ssl;
 };
 
 // RFC 7230, 3.2.3. WhiteSpace
@@ -669,13 +947,18 @@ std::string numberToString(T Number)
 template <typename T, typename C>
 T hexDigitToUint(const C c)
 {
-    if (c >= 0x30 && c <= 0x39) 
+    if (c >= 0x30 && c <= 0x39)
         return static_cast<T>(c - 0x30); // 0 - 9
-    if (c >= 0x41 && c <= 0x46) 
+    if (c >= 0x41 && c <= 0x46)
         return static_cast<T>(c - 0x41) + T(10); // A - Z
-    if (c >= 0x61 && c <= 0x66) 
+    if (c >= 0x61 && c <= 0x66)
         return static_cast<T>(c - 0x61) + T(10); // a - z, some services send lower-case hex digits
     throw ResponseError("Invalid hex digit");
+}
+
+inline char toLower(const char c)
+{
+    return (c >= 'A' && c <= 'Z') ? c - ('A' - 'a') : c;
 }
 
 // RFC 3986, 3. Syntax Components
@@ -750,8 +1033,11 @@ Uri parseUri(const Iterator begin, const Iterator end)
         // RFC 3986, 3.2.3. Port
         result.port = result.host.substr(portPosition + 1);
         result.host.resize(portPosition);
+    } else if (result.scheme == "http") {
+        result.port = "80";
+    } else if (result.scheme == "https") {
+        result.port = "443";
     }
-
     return result;
 }
 
@@ -894,9 +1180,9 @@ std::pair<Iterator, std::string> parseFieldContent(const Iterator begin, const I
 template <class Iterator>
 std::pair<Iterator, HeaderField> parseHeaderField(const Iterator begin, const Iterator end)
 {
-    std::pair<Iterator, std::string> tokenResult = parseToken(begin, end);
+    std::pair<Iterator, std::string> tokenResult = detail::parseToken(begin, end);
     Iterator i                                   = tokenResult.first;
-    std::string fieldName                        = tokenResult.second;
+    std::string field_name                       = tokenResult.second;
 
     if (i == end || *i++ != ':')
         throw ResponseError("Invalid header");
@@ -913,35 +1199,39 @@ std::pair<Iterator, HeaderField> parseHeaderField(const Iterator begin, const It
     if (i == end || *i++ != '\n')
         throw ResponseError("Invalid header");
 
-    return std::make_pair(i, HeaderField(fieldName, fieldValue));
+    // Transform the field name to lower-case letters.
+    std::transform(field_name.begin(), field_name.end(), field_name.begin(), detail::toLower);
+
+    // Return the field name and value.
+    return std::make_pair(i, HeaderField(field_name, fieldValue));
 }
 
 // RFC 7230, 3.1.2. Status Line
 template <class Iterator>
 std::pair<Iterator, Status> parseStatusLine(const Iterator begin, const Iterator end)
 {
-    const std::pair<Iterator, HttpVersion> httpVersionResult = parseHttpVersion(begin, end);
-    Iterator i                                               = httpVersionResult.first;
-
-    if (i == end || *i++ != ' ')
+    std::pair<Iterator, HttpVersion> http_version;
+    std::pair<Iterator, uint16_t> status_code;
+    std::pair<Iterator, std::string> reason_phrase;
+    Iterator it = begin;
+    // Read the http version.
+    http_version = detail::parseHttpVersion(it, end);
+    it           = http_version.first;
+    if ((it == end) || (*it++ != ' '))
         throw ResponseError("Invalid status line");
-
-    const std::pair<Iterator, uint16_t> statusCodeResult = parseStatusCode(i, end);
-    i                                                    = statusCodeResult.first;
-
-    if (i == end || *i++ != ' ')
+    // Read the status code.
+    status_code = detail::parseStatusCode(it, end);
+    it          = status_code.first;
+    if ((it == end) || (*it++ != ' '))
         throw ResponseError("Invalid status line");
-
-    std::pair<Iterator, std::string> reasonPhraseResult = parseReasonPhrase(i, end);
-    i                                                   = reasonPhraseResult.first;
-
-    if (i == end || *i++ != '\r')
+    // Read the reason phrase.
+    reason_phrase = detail::parseReasonPhrase(it, end);
+    it            = reason_phrase.first;
+    if (it == end || *it++ != '\r')
         throw ResponseError("Invalid status line");
-
-    if (i == end || *i++ != '\n')
+    if (it == end || *it++ != '\n')
         throw ResponseError("Invalid status line");
-
-    return std::make_pair(i, Status(httpVersionResult.second, statusCodeResult.second, reasonPhraseResult.second));
+    return std::make_pair(it, Status(http_version.second, status_code.second, reason_phrase.second));
 }
 
 // RFC 7230, 4.1. Chunked Transfer Coding
@@ -970,10 +1260,10 @@ inline std::string encodeRequestLine(const std::string &method, const std::strin
 }
 
 // RFC 7230, 3.2. Header Fields
-inline std::string encodeHeaderFields(const HeaderFields &headerFields)
+inline std::string encodeHeaderFields(const HeaderFields &header_fields)
 {
     std::string result;
-    for (HeaderFields::const_iterator field = headerFields.begin(); field != headerFields.end(); ++field) {
+    for (HeaderFields::const_iterator field = header_fields.begin(); field != header_fields.end(); ++field) {
         if (field->first.empty())
             throw RequestError("Invalid header field name");
         for (std::string::const_iterator c = field->first.begin(); c != field->first.end(); ++c)
@@ -1034,28 +1324,28 @@ std::string encodeBase64(const Iterator begin, const Iterator end)
 inline std::vector<uint8_t> encodeHtml(const Uri &uri,
                                        const std::string &method,
                                        const std::vector<uint8_t> &body,
-                                       HeaderFields headerFields)
+                                       HeaderFields header_fields)
 {
-    if (uri.scheme != "http")
-        throw RequestError("Only HTTP scheme is supported");
+    //if (uri.scheme != "http")
+    //    throw RequestError("Only HTTP scheme is supported");
 
     // RFC 7230, 5.3. Request Target
     const std::string requestTarget = uri.path + (uri.query.empty() ? "" : '?' + uri.query);
 
     // RFC 7230, 5.4. Host
-    headerFields.push_back(HeaderField("Host", uri.host));
+    header_fields.push_back(HeaderField("Host", uri.host));
 
     // RFC 7230, 3.3.2. Content-Length
-    headerFields.push_back(HeaderField("Content-Length", detail::numberToString(body.size())));
+    header_fields.push_back(HeaderField("Content-Length", detail::numberToString(body.size())));
 
     // RFC 7617, 2. The 'Basic' Authentication Scheme
     if (!uri.user.empty() || !uri.password.empty()) {
         std::string userinfo = uri.user + ':' + uri.password;
-        headerFields.push_back(HeaderField("Authorization", "Basic " + encodeBase64(userinfo.begin(), userinfo.end())));
+        header_fields.push_back(HeaderField("Authorization", "Basic " + encodeBase64(userinfo.begin(), userinfo.end())));
     }
 
     const std::string headerData = encodeRequestLine(method, requestTarget) +
-                                   encodeHeaderFields(headerFields) +
+                                   encodeHeaderFields(header_fields) +
                                    "\r\n";
 
     std::vector<uint8_t> result(headerData.begin(), headerData.end());
@@ -1077,197 +1367,219 @@ time_t getRemainingMilliseconds(const time_t time)
     return (remainingTime > 0) ? remainingTime : 0;
 }
 
-inline char toLower(const char c)
-{
-    return (c >= 'A' && c <= 'Z') ? c - ('A' - 'a') : c;
-}
-
 } // namespace detail
 
 class Request {
 public:
     Request(const std::string &uriString,
             const InternetProtocol protocol = InternetProtocol::V4)
-        : internetProtocol(protocol),
+        : internet_protocol(protocol),
           uri(detail::parseUri(uriString.begin(), uriString.end()))
     {
     }
 
-    Response send(const std::string &method        = "GET",
-                  const std::string &body          = "",
-                  const HeaderFields &headerFields = HeaderFields(),
-                  const std::time_t timeout        = std::time_t(-1))
+    Response send(const std::string &method         = "GET",
+                  const std::string &body           = "",
+                  const HeaderFields &header_fields = HeaderFields(),
+                  const std::time_t timeout         = std::time_t(-1))
     {
         return this->send(
             method,
             std::vector<uint8_t>(body.begin(), body.end()),
-            headerFields,
+            header_fields,
             timeout);
     }
 
     Response send(const std::string &method,
                   const std::vector<uint8_t> &body,
-                  const HeaderFields &headerFields = HeaderFields(),
-                  const std::time_t timeout        = std::time_t(-1))
+                  const HeaderFields &header_fields = HeaderFields(),
+                  const std::time_t timeout         = std::time_t(-1))
     {
-        const time_t stopTime = detail::getTimeNowMilliseconds() + timeout;
-
-        if (uri.scheme != "http")
-            throw RequestError("Only HTTP scheme is supported");
+        const time_t stop_time = detail::getTimeNowMilliseconds() + timeout;
+        ssize_t size;
 
         addrinfo hints    = {};
-        hints.ai_family   = internetProtocol.getAddressFamily();
+        hints.ai_family   = internet_protocol.getAddressFamily();
         hints.ai_socktype = SOCK_STREAM;
-
-        const char *port = uri.port.empty() ? "80" : uri.port.c_str();
-
+        // Translate name of a service location and/or a service name to set of socket addresses.
         addrinfo *_info;
-        if (getaddrinfo(uri.host.c_str(), port, &hints, &_info) != 0)
+        if (getaddrinfo(uri.host.c_str(), uri.port.c_str(), &hints, &_info) != 0)
             throw SystemError(detail::getLastError(), "Failed to get address info of " + uri.host);
-
+        // Make a copy and then free the other.
         addrinfo info = *_info;
         freeaddrinfo(_info);
+        // Encode the request.
+        const std::vector<uint8_t> request_data = detail::encodeHtml(uri, method, body, header_fields);
+        // Create the socket.
+        detail::Socket socket(internet_protocol);
+        // Take the first address from the list
+        socket.connect(uri, info.ai_addr, info.ai_addrlen, (timeout >= 0) ? detail::getRemainingMilliseconds(stop_time) : -1);
 
-        const std::vector<uint8_t> requestData = detail::encodeHtml(uri, method, body, headerFields);
+        size_t remaining        = request_data.size();
+        const uint8_t *sendData = request_data.data();
 
-        detail::Socket socket(internetProtocol);
-
-        // take the first address from the list
-        socket.connect(
-            info.ai_addr,
-            static_cast<socklen_t>(info.ai_addrlen),
-            (timeout >= 0) ? detail::getRemainingMilliseconds(stopTime) : -1);
-
-        size_t remaining        = requestData.size();
-        const uint8_t *sendData = requestData.data();
-
-        // send the request
+        // Send the request.
         while (remaining > 0) {
-            const ssize_t size = socket.send(
-                sendData,
-                remaining,
-                (timeout >= 0) ? detail::getRemainingMilliseconds(stopTime) : -1);
+            size = socket.send(sendData, remaining, (timeout >= 0) ? detail::getRemainingMilliseconds(stop_time) : -1);
             remaining -= size;
             sendData += size;
         }
 
-        uint8_t tempBuffer[4096];
-        uint8_t crlf[2]      = { '\r', '\n' };
-        uint8_t headerEnd[4] = { '\r', '\n', '\r', '\n' };
+        uint8_t buffer[BUFSIZ];
+        std::vector<uint8_t> crlf;
+        crlf.push_back('\r');
+        crlf.push_back('\n');
+        std::vector<uint8_t> header_end;
+        header_end.push_back('\r');
+        header_end.push_back('\n');
+        header_end.push_back('\r');
+        header_end.push_back('\n');
+
         Response response;
-        std::vector<uint8_t> responseData;
-        bool parsingBody              = false;
-        bool contentLengthReceived    = false;
-        std::size_t contentLength     = 0U;
-        bool chunkedResponse          = false;
+        std::vector<uint8_t> response_data;
+        bool parsing_header           = true;
+        bool content_length_received  = false;
+        std::size_t content_length    = 0U;
+        bool chunked_response         = false;
         std::size_t expectedChunkSize = 0U;
         bool removeCrlfAfterChunk     = false;
 
         typedef std::vector<uint8_t>::iterator Iterator;
+        typedef std::pair<Iterator, Status> StatusLine;
+        typedef std::pair<Iterator, HeaderField> HeaderFieldLine;
+
+        Iterator header_begin_it, header_end_it, it;
+        StatusLine status_line;
+        HeaderFieldLine header_field_line;
 
         // read the response
-        for (;;) {
-            const ssize_t size = socket.recv(
-                tempBuffer,
-                4096,
-                (timeout >= 0) ? detail::getRemainingMilliseconds(stopTime) : -1);
-            if (size == 0) { // disconnected
+        while (true) {
+            logging::debug("Reading...\n");
+            size = socket.recv(buffer, sizeof(buffer), (timeout >= 0) ? detail::getRemainingMilliseconds(stop_time) : -1);
+            logging::debug("We read %d bytes.\n", size);
 
+            // Disconnected.
+            if (size == 0) {
+                logging::debug("Nothing to read\n");
                 return response;
             }
 
-            responseData.insert(
-                responseData.end(),
-                tempBuffer,
-                tempBuffer + size);
+            // Close the buffer.
+            buffer[size] = 0;
 
-            if (!parsingBody) {
+            // Append the response.
+            response_data.insert(response_data.end(), buffer, buffer + size);
+
+            // We are still parsing the header.
+            if (parsing_header) {
+                logging::debug("Parsig header...\n");
+
+                // Save the beginning of the header.
+                header_begin_it = response_data.begin();
+
                 // RFC 7230, 3. Message Format
                 // Empty line indicates the end of the header section (RFC 7230, 2.1. Client/Server Messaging)
-                const Iterator endIterator =
-                    std::search(
-                        responseData.begin(), responseData.end(),
-                        headerEnd, headerEnd + 4);
-                if (endIterator == responseData.end())
-                    break; // two consecutive CRLFs not found
+                header_end_it = std::search(response_data.begin(), response_data.end(), header_end.begin(), header_end.end());
 
-                const Iterator headerBeginIterator = responseData.begin();
-                const Iterator headerEndIterator   = endIterator + 2;
+                // Cannot find the end of the header.
+                if (header_end_it == response_data.end()) {
+                    logging::warning("We cannot find the end of the header.\n");
+                    continue;
+                }
 
-                std::pair<Iterator, Status> statusLineResult = detail::parseStatusLine(headerBeginIterator, headerEndIterator);
-                Iterator i                                   = statusLineResult.first;
+                // Include the first newline.
+                header_end_it += 2;
 
-                response.status = statusLineResult.second;
+                // Parse the status line.
+                status_line = detail::parseStatusLine(header_begin_it, header_end_it);
+                // Get the iterator after the status line.
+                it = status_line.first;
+                // Save the status.
+                response.status = status_line.second;
 
                 for (;;) {
-                    std::pair<Iterator, HeaderField> headerFieldResult = detail::parseHeaderField(i, headerEndIterator);
-                    i                                                  = headerFieldResult.first;
+                    // Read the header field.
+                    header_field_line = detail::parseHeaderField(it, header_end_it);
 
-                    std::string fieldName = headerFieldResult.second.first;
-                    std::transform(fieldName.begin(), fieldName.end(), fieldName.begin(), detail::toLower);
+                    // Move the iterator after the field we just read.
+                    it = header_field_line.first;
 
-                    std::string fieldValue = headerFieldResult.second.second;
+                    // Get the field name.
+                    std::string field_name = header_field_line.second.first;
+                    // Get the field value.
+                    std::string field_value = header_field_line.second.second;
 
-                    if (fieldName == "transfer-encoding") {
+                    if (field_name == "transfer-encoding") {
                         // RFC 7230, 3.3.1. Transfer-Encoding
-                        if (fieldValue == "chunked")
-                            chunkedResponse = true;
+                        if (field_value == "chunked")
+                            chunked_response = true;
                         else
-                            throw ResponseError("Unsupported transfer encoding: " + fieldValue);
-                    } else if (fieldName == "content-length") {
+                            throw ResponseError("Unsupported transfer encoding: " + field_value);
+                    } else if (field_name == "content-length") {
                         // RFC 7230, 3.3.2. Content-Length
-                        contentLength         = detail::stringToUint<std::size_t>(fieldValue.begin(), fieldValue.end());
-                        contentLengthReceived = true;
-                        response.body.reserve(contentLength);
+                        content_length          = detail::stringToUint<std::size_t>(field_value.begin(), field_value.end());
+                        content_length_received = true;
+                        response.body.reserve(content_length);
+                        logging::debug("Reserving %d bytes for the body.\n", content_length);
                     }
 
-                    response.headerFields.push_back(HeaderField(fieldName, fieldValue));
+                    response.header_fields.push_back(HeaderField(field_name, field_value));
 
-                    if (i == headerEndIterator)
+                    if (it == header_end_it)
                         break;
                 }
 
-                responseData.erase(responseData.begin(), headerEndIterator + 2);
-                parsingBody = true;
+                // Include the second and last newline.
+                header_end_it += 2;
+
+                // Erease the header.
+                response_data.erase(header_begin_it, header_end_it);
+
+                // We finished parsing the header.
+                parsing_header = false;
+
+                logging::debug("Parsig body...\n");
             }
 
-            if (parsingBody) {
+            if (!parsing_header) {
                 // Content-Length must be ignored if Transfer-Encoding is received (RFC 7230, 3.2. Content-Length)
-                if (chunkedResponse) {
+                if (chunked_response) {
+                    logging::debug("Parsing chunked response...\n");
                     // RFC 7230, 4.1. Chunked Transfer Coding
                     for (;;) {
                         if (expectedChunkSize > 0) {
-                            const size_t toWrite = std::min(expectedChunkSize, responseData.size());
-                            response.body.insert(response.body.end(), responseData.begin(),
-                                                 responseData.begin() + static_cast<std::ptrdiff_t>(toWrite));
-                            responseData.erase(responseData.begin(),
-                                               responseData.begin() + static_cast<std::ptrdiff_t>(toWrite));
-                            expectedChunkSize -= toWrite;
+                            const size_t to_write = std::min(expectedChunkSize, response_data.size());
+                            response.body.insert(response.body.end(), response_data.begin(),
+                                                 response_data.begin() + static_cast<std::ptrdiff_t>(to_write));
+                            std::cout << "response.body.insert[1](" << to_write << ") :" << response.body.size() << "\n";
+                            response_data.erase(response_data.begin(),
+                                                response_data.begin() + static_cast<std::ptrdiff_t>(to_write));
+                            expectedChunkSize -= to_write;
 
                             if (expectedChunkSize == 0)
                                 removeCrlfAfterChunk = true;
-                            if (responseData.empty())
+                            if (response_data.empty())
                                 break;
                         } else {
                             if (removeCrlfAfterChunk) {
-                                if (responseData.size() < 2)
+                                if (response_data.size() < 2)
                                     break;
 
-                                if (!std::equal(crlf, crlf + 2, responseData.begin()))
+                                if (!std::equal(crlf.begin(), crlf.end(), response_data.begin()))
                                     throw ResponseError("Invalid chunk");
 
                                 removeCrlfAfterChunk = false;
-                                responseData.erase(responseData.begin(), responseData.begin() + 2);
+                                response_data.erase(response_data.begin(), response_data.begin() + 2);
                             }
 
-                            Iterator i = std::search(responseData.begin(), responseData.end(), crlf, crlf + 2);
+                            Iterator i = std::search(response_data.begin(), response_data.end(), crlf.begin(), crlf.end());
 
-                            if (i == responseData.end())
+                            if (i == response_data.end())
                                 break;
 
-                            expectedChunkSize = detail::hexStringToUint<uint8_t, Iterator>(responseData.begin(), i);
+                            expectedChunkSize = detail::hexStringToUint<uint8_t, Iterator>(response_data.begin(), i);
 
-                            responseData.erase(responseData.begin(), i + 2);
+                            response_data.erase(response_data.begin(), i + 2);
 
                             if (expectedChunkSize == 0) {
                                 return response;
@@ -1275,13 +1587,15 @@ public:
                         }
                     }
                 } else {
-                    response.body.insert(response.body.end(), responseData.begin(), responseData.end());
-                    responseData.clear();
-
+                    logging::debug("Parsing whole response...\n");
+                    response.body.insert(response.body.end(), response_data.begin(), response_data.end());
+                    response_data.clear();
                     // got the whole content
-                    if (contentLengthReceived && response.body.size() >= contentLength) {
+                    if (content_length_received && (response.body.size() >= content_length)) {
+                        logging::debug("We got the whole content.\n");
                         return response;
                     }
+                    logging::debug("We still have content to read.\n");
                 }
             }
         }
@@ -1293,7 +1607,7 @@ private:
 #if defined(_WIN32) || defined(__CYGWIN__)
     WinSock winSock;
 #endif // defined(_WIN32) || defined(__CYGWIN__)
-    InternetProtocol internetProtocol;
+    InternetProtocol internet_protocol;
     Uri uri;
 };
 

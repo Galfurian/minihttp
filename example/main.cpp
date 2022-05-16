@@ -58,17 +58,16 @@ int main(int argc, const char *argv[])
         fields.push_back(http::HeaderField("User-Agent", "runscope/0.1"));
         fields.push_back(http::HeaderField("Accept", "*/*"));
 
-        const http::Response response = request.send(method, arguments, fields, 2000);
-
-        std::cout << response.status.reason << '\n';
+        const http::Response response = request.send(method, arguments, fields, 4000);
 
         if (response.status.code == http::Status::Ok) {
             if (!output.empty()) {
                 std::ofstream outfile(output.c_str(), std::ofstream::binary);
                 outfile.write(reinterpret_cast<const char *>(response.body.data()),
                               static_cast<std::streamsize>(response.body.size()));
-            } else
+            } else {
                 std::cout << std::string(response.body.begin(), response.body.end()) << '\n';
+            }
         }
     } catch (const http::RequestError &e) {
         std::cerr << "Request error: " << e.what() << '\n';

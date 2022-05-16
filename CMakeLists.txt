@@ -23,7 +23,6 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/")
 # -----------------------------------------------------------------------------
 # Add options.
 # -----------------------------------------------------------------------------
-option(MBEDTLS_SUPPORT "Enable MbedTLS support" OFF)
 option(STRICT_WARNINGS "Enable strict compiler warnings" ON)
 option(WARNINGS_AS_ERRORS "Treat all warnings as errors" OFF)
 option(BUILD_EXAMPLES "Build examples" OFF)
@@ -43,15 +42,13 @@ endif()
 # -----------------------------------------------------------------------------
 # DEPENDENCIES
 # -----------------------------------------------------------------------------
-if(MBEDTLS_SUPPORT)
-    find_package(mbedtls REQUIRED)
-    # Inlcude header directories.
-    target_include_directories(${PROJECT_NAME} INTERFACE ${MBEDTLS_INCLUDE_DIRS})
-    # Link libraries.
-    target_link_libraries(${PROJECT_NAME} INTERFACE mbedtls mbedx509 mbedcrypto)
-    # Add definition.
-    target_compile_definitions(${PROJECT_NAME} INTERFACE MBEDTLS_ENABLED)
-endif()
+find_package(mbedtls REQUIRED)
+# Inlcude header directories.
+target_include_directories(${PROJECT_NAME} INTERFACE ${MBEDTLS_INCLUDE_DIRS})
+# Link libraries.
+target_link_libraries(${PROJECT_NAME} INTERFACE mbedtls mbedx509 mbedcrypto)
+# Add definition.
+target_compile_definitions(${PROJECT_NAME} INTERFACE MBEDTLS_ENABLED)
 
 # -----------------------------------------------------------------------------
 # Set the compilation flags.
