@@ -287,21 +287,21 @@ struct Uri {
 /// @brief Stores an HTTP version.
 struct HttpVersion {
     /// Major identifier.
-    uint16_t major;
+    uint16_t ver_major;
     /// Minor identifier.
-    uint16_t minor;
+    uint16_t ver_minor;
 
     HttpVersion()
-        : major(),
-          minor()
+        : ver_major(),
+          ver_minor()
     {
         // Nothing to do.
     }
 
-    /// @brief Construct a new Http Version object based on input _major and _minor versions.
-    HttpVersion(uint16_t _major, uint16_t _minor)
-        : major(_major),
-          minor(_minor)
+    /// @brief Construct a new Http Version object based on input _ver_major and _ver_minor versions.
+    HttpVersion(uint16_t _ver_major, uint16_t _ver_minor)
+        : ver_major(_ver_major),
+          ver_minor(_ver_minor)
     {
         // Nothing to do.
     }

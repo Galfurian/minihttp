@@ -47,8 +47,6 @@ find_package(mbedtls REQUIRED)
 target_include_directories(${PROJECT_NAME} INTERFACE ${MBEDTLS_INCLUDE_DIRS})
 # Link libraries.
 target_link_libraries(${PROJECT_NAME} INTERFACE mbedtls mbedx509 mbedcrypto)
-# Add definition.
-target_compile_definitions(${PROJECT_NAME} INTERFACE MBEDTLS_ENABLED)
 
 # -----------------------------------------------------------------------------
 # Set the compilation flags.
