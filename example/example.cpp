@@ -60,7 +60,7 @@ int main(int argc, const char *argv[])
 
         const http::Response response = request.send(method, arguments, fields, 4000);
 
-        if (response.status.code == http::Status::Ok) {
+        if (response.status.status_code == http::Status::Ok) {
             if (!output.empty()) {
                 std::ofstream outfile(output.c_str(), std::ofstream::binary);
                 outfile.write(reinterpret_cast<const char *>(response.body.data()),
@@ -68,6 +68,8 @@ int main(int argc, const char *argv[])
             } else {
                 std::cout << std::string(response.body.begin(), response.body.end()) << '\n';
             }
+        } else {
+            std::cout << "Request failed : " << response.status.reason_phrase << "\n";
         }
     } catch (const http::RequestError &e) {
         std::cerr << "Request error: " << e.what() << '\n';

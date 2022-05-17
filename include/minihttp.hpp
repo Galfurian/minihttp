@@ -57,10 +57,105 @@ extern "C" char *_strdup(const char *strSource);
 
 namespace http
 {
+#define MINIHTTP_VERSION_MAJOR 1 ///< Major version.
+#define MINIHTTP_VERSION_MINOR 0 ///< Minor version.
+#define MINIHTTP_VERSION_PATCH 0 ///< Patch version.
+
+/// @brief Logging functions.
+namespace logging
+{
+
+#define CONSOLE_RST "\x1B[0m" ///< Reset: turn off all attributes.
+#define CONSOLE_BLD "\x1B[1m" ///< Bold or bright.
+#define CONSOLE_ITA "\x1B[2m" ///< Italic.
+#define CONSOLE_UND "\x1B[4m" ///< Underlined.
+
+#define CONSOLE_RED "\x1B[31m" ///< Sets color to RED.
+#define CONSOLE_GRN "\x1B[32m" ///< Sets color to GREEN.
+#define CONSOLE_YEL "\x1B[33m" ///< Sets color to YELLOW.
+#define CONSOLE_BLU "\x1B[34m" ///< Sets color to BLUE.
+#define CONSOLE_MAG "\x1B[35m" ///< Sets color to MAGENTA.
+#define CONSOLE_CYN "\x1B[36m" ///< Sets color to CYAN.
+#define CONSOLE_WHT "\x1B[37m" ///< Sets color to WHITE.
+
+/// @brief Returns the current time.
+inline const char *get_time()
+{
+    static char buffer[80];
+    time_t now = time(0);
+    struct tm tstruct;
+    tstruct = *localtime(&now);
+    strftime(buffer, sizeof(buffer), "%X", &tstruct);
+    return buffer;
+}
+
+#ifndef NDEBUG
+/// @brief Prints a debugging message.
+inline void debug(const char *format, ...)
+{
+    va_list args;
+    fputs(CONSOLE_CYN, stdout);
+    fputs("[", stdout);
+    fputs(logging::get_time(), stdout);
+    fputs("] ", stdout);
+    va_start(args, format);
+    vfprintf(stdout, format, args);
+    va_end(args);
+    fputs(CONSOLE_RST, stdout);
+}
+#else
+/// @brief Do not print debugging messages.
+#define debug(...)
+#endif
+
+/// @brief Prints an generic message.
+inline void info(const char *format, ...)
+{
+    va_list args;
+    fputs(CONSOLE_WHT, stdout);
+    fputs("[", stdout);
+    fputs(logging::get_time(), stdout);
+    fputs("] ", stdout);
+    va_start(args, format);
+    vfprintf(stdout, format, args);
+    va_end(args);
+    fputs(CONSOLE_RST, stdout);
+}
+
+/// @brief Prints a warning message.
+inline void warning(const char *format, ...)
+{
+    va_list args;
+    fputs(CONSOLE_YEL, stdout);
+    fputs("[", stdout);
+    fputs(logging::get_time(), stdout);
+    fputs("] ", stdout);
+    va_start(args, format);
+    vfprintf(stdout, format, args);
+    va_end(args);
+    fputs(CONSOLE_RST, stdout);
+}
+
+/// @brief Prints an error message.
+inline void error(const char *format, ...)
+{
+    va_list args;
+    fputs(CONSOLE_RED, stderr);
+    fputs("[", stdout);
+    fputs(logging::get_time(), stdout);
+    fputs("] ", stdout);
+    va_start(args, format);
+    vfprintf(stderr, format, args);
+    va_end(args);
+    fputs(CONSOLE_RST, stderr);
+}
+
+} // namespace logging
 
 namespace detail
 {
 
+/// @brief Returns the last error.
 inline int getLastError()
 {
 #if defined(_WIN32) || defined(__CYGWIN__)
@@ -70,25 +165,28 @@ inline int getLastError()
 #endif // defined(_WIN32) || defined(__CYGWIN__)
 }
 
-inline const char *getLastErrorStr(int err)
+/// @brief Returns the string representing the error.
+inline const char *getLastErrorStr(int error)
 {
 #ifdef _WIN32
     char *s = 0;
-    ::FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM, NULL, err, 0, (LPSTR)&s, 0, NULL);
+    ::FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM, NULL, error, 0, (LPSTR)&s, 0, NULL);
     if (s) {
         ret = s;
         ::LocalFree(s);
     }
     return s;
 #else
-    return strerror(err);
+    return strerror(error);
 #endif
 }
 
 } // namespace detail
 
+/// @brief Represents a request error.
 class RequestError : public std::logic_error {
 public:
+    /// @brief Construct a new request error.
     RequestError(const std::string &__arg)
         : std::logic_error::logic_error(__arg)
     {
@@ -96,8 +194,10 @@ public:
     }
 };
 
+/// @brief Represents a response error.
 class ResponseError : public std::runtime_error {
 public:
+    /// @brief Construct a new response error.
     ResponseError(const std::string &__arg)
         : std::runtime_error(__arg)
     {
@@ -105,13 +205,17 @@ public:
     }
 };
 
+/// @brief Represents a system error.
 class SystemError : public std::runtime_error {
 public:
+    /// @brief Construct a new system error.
     SystemError(int _error, const std::string &__arg)
         : std::runtime_error(__arg + " : " + detail::getLastErrorStr(_error))
     {
         // Nothing to do.
     }
+
+    /// @brief Construct a new system error.
     SystemError(const std::string &_error, const std::string &__arg)
         : std::runtime_error(__arg + " : " + _error)
     {
@@ -119,23 +223,31 @@ public:
     }
 };
 
+/// @brief Internet protocol.
 struct InternetProtocol {
+    /// @brief The internet protocol versions.
     enum Enum {
-        V4,
-        V6
-    } value;
+        V4, ///< Internet Protocol Version 4 (IPv4).
+        V6  ///< Internet Protocol Version 6 (IPv6).
+    };
+    /// @brief The stored internet protocol version.
+    Enum value;
 
+    /// @brief Construct a new internet protocol object.
+    /// @param _value the intialization value.
     InternetProtocol(Enum _value)
         : value(_value)
     {
         // Nothing to do.
     }
 
+    /// @brief Checks equality between internet protocols.
     inline bool operator==(Enum _value) const
     {
         return value == _value;
     }
 
+    /// @brief Returns the address family based on the internet protocol version.
     inline int getAddressFamily() const
     {
         if (value == InternetProtocol::V4)
@@ -146,19 +258,37 @@ struct InternetProtocol {
     }
 };
 
+/// @brief Uniform Resource Identifier (URI).
+/// @details
+/// `URI = scheme ":" ["//" authority] path ["?" query] ["#" fragment]`
+/// `authority = [userinfo "@"] host [":" port]`
 struct Uri {
+    /// @brief A non-empty scheme component followed by a colon (:).
     std::string scheme;
-    std::string user;
-    std::string password;
-    std::string host;
-    std::string port;
+    /// @brief An optional authority component.
+    struct {
+        /// The *user* attribute of the userinfo.
+        std::string user;
+        /// The *password* attribute of the userinfo.
+        std::string password;
+        /// Can be either a registered name (including but not limited to a hostname) or an IP address.
+        std::string host;
+        /// The optional port.
+        std::string port;
+    } authority;
+    /// A path consists of a sequence of path segments separated by a slash.
     std::string path;
+    /// A query string of non-hierarchical data preceded by a question mark.
     std::string query;
+    /// Fragment identifier providing direction to a secondary resource.
     std::string fragment;
 };
 
+/// @brief Stores an HTTP version.
 struct HttpVersion {
+    /// Major identifier.
     uint16_t major;
+    /// Minor identifier.
     uint16_t minor;
 
     HttpVersion()
@@ -168,8 +298,8 @@ struct HttpVersion {
         // Nothing to do.
     }
 
-    HttpVersion(uint16_t _major,
-                uint16_t _minor)
+    /// @brief Construct a new Http Version object based on input _major and _minor versions.
+    HttpVersion(uint16_t _major, uint16_t _minor)
         : major(_major),
           minor(_minor)
     {
@@ -177,8 +307,9 @@ struct HttpVersion {
     }
 };
 
+/// @brief HTTP status information.
 struct Status {
-    // RFC 7231, 6. Response Status Codes
+    /// RFC 7231, 6. Response Status Codes.
     enum Code {
         Continue          = 100,
         SwitchingProtocol = 101,
@@ -246,125 +377,52 @@ struct Status {
         NotExtended                   = 510,
         NetworkAuthenticationRequired = 511
     };
-
+    /// The HTTP version.
     HttpVersion http_version;
-    uint16_t code;
-    std::string reason;
+    /// The Status-Code element is a 3-digit integer result code of the attempt to understand and satisfy the request.
+    uint16_t status_code;
+    /// The Reason-Phrase is intended to give a short textual description of the Status-Code.
+    std::string reason_phrase;
 
     Status()
         : http_version(),
-          code(),
-          reason()
+          status_code(),
+          reason_phrase()
     {
         // Nothing to do.
     }
 
-    Status(HttpVersion _http_version, uint16_t _code, std::string _reason)
+    /// @brief Construct a new Status object.
+    Status(HttpVersion _http_version, uint16_t _status_code, std::string _reason_phrase)
         : http_version(_http_version),
-          code(_code),
-          reason(_reason)
+          status_code(_status_code),
+          reason_phrase(_reason_phrase)
     {
         // Nothing to do.
     }
 };
 
+typedef std::vector<uint8_t> Data;
+typedef std::vector<uint8_t>::iterator Iterator;
+/// Stores a field of the header.
 typedef std::pair<std::string, std::string> HeaderField;
+/// Stores the list of fields inside a header.
 typedef std::vector<HeaderField> HeaderFields;
 
+/// @brief The structure of an HTTP response.
 struct Response {
+    /// The HTTP status of the response.
     Status status;
+    /// The list of fields inside a header.
     HeaderFields header_fields;
-    std::vector<uint8_t> body;
+    /// The body of the response.
+    Data body;
 };
-
-namespace logging
-{
-
-#define CONSOLE_RST "\x1B[0m" ///< Reset: turn off all attributes.
-#define CONSOLE_BLD "\x1B[1m" ///< Bold or bright.
-#define CONSOLE_ITA "\x1B[2m" ///< Italic.
-#define CONSOLE_UND "\x1B[4m" ///< Underlined.
-
-#define CONSOLE_RED "\x1B[31m" ///< Sets color to RED.
-#define CONSOLE_GRN "\x1B[32m" ///< Sets color to GREEN.
-#define CONSOLE_YEL "\x1B[33m" ///< Sets color to YELLOW.
-#define CONSOLE_BLU "\x1B[34m" ///< Sets color to BLUE.
-#define CONSOLE_MAG "\x1B[35m" ///< Sets color to MAGENTA.
-#define CONSOLE_CYN "\x1B[36m" ///< Sets color to CYAN.
-#define CONSOLE_WHT "\x1B[37m" ///< Sets color to WHITE.
-
-inline const char *get_date_time()
-{
-    static char buffer[80];
-    time_t now = time(0);
-    struct tm tstruct;
-    tstruct = *localtime(&now);
-    strftime(buffer, sizeof(buffer), "%X", &tstruct);
-    return buffer;
-}
-
-#ifndef NDEBUG
-inline void debug(const char *format, ...)
-{
-    va_list args;
-    fputs(CONSOLE_CYN, stdout);
-    fputs("[", stdout);
-    fputs(get_date_time(), stdout);
-    fputs("] ", stdout);
-    va_start(args, format);
-    vfprintf(stdout, format, args);
-    va_end(args);
-    fputs(CONSOLE_RST, stdout);
-}
-#else
-#define debug(...)
-#endif
-
-inline void info(const char *format, ...)
-{
-    va_list args;
-    fputs(CONSOLE_WHT, stdout);
-    fputs("[", stdout);
-    fputs(get_date_time(), stdout);
-    fputs("] ", stdout);
-    va_start(args, format);
-    vfprintf(stdout, format, args);
-    va_end(args);
-    fputs(CONSOLE_RST, stdout);
-}
-
-inline void warning(const char *format, ...)
-{
-    va_list args;
-    fputs(CONSOLE_YEL, stdout);
-    fputs("[", stdout);
-    fputs(get_date_time(), stdout);
-    fputs("] ", stdout);
-    va_start(args, format);
-    vfprintf(stdout, format, args);
-    va_end(args);
-    fputs(CONSOLE_RST, stdout);
-}
-
-inline void error(const char *format, ...)
-{
-    va_list args;
-    fputs(CONSOLE_RED, stderr);
-    fputs("[", stdout);
-    fputs(get_date_time(), stdout);
-    fputs("] ", stdout);
-    va_start(args, format);
-    vfprintf(stderr, format, args);
-    va_end(args);
-    fputs(CONSOLE_RST, stderr);
-}
-
-} // namespace logging
 
 namespace detail
 {
 
-const char *mbedt_get_errstr(int err)
+const char *mbedtls_get_strerror(int err)
 {
     static char error_text[256];
     mbedtls_strerror(err, error_text, sizeof(error_text));
@@ -457,24 +515,27 @@ public:
     {
         const char *pers = "minihttp";
         int err_code;
+
         // The CTR_DRBG context to seed.
         err_code = mbedtls_ctr_drbg_seed(&ctr_drbg, mbedtls_entropy_func, &entropy, reinterpret_cast<const unsigned char *>(pers), strlen(pers) + 1);
         if (err_code != 0)
-            throw SystemError(detail::mbedt_get_errstr(err_code), "Failed to call ctr_drbg_seed");
+            throw SystemError(detail::mbedtls_get_strerror(err_code), "Failed to call ctr_drbg_seed");
+
         // Parse the certificates and add them to the chained list.
         if (!certs.empty()) {
             err_code = mbedtls_x509_crt_parse(&cacert, reinterpret_cast<const unsigned char *>(certs.c_str()), certs.size());
             if (err_code != 0)
-                throw SystemError(detail::mbedt_get_errstr(err_code), "Failed to call x509_crt_parse");
+                throw SystemError(detail::mbedtls_get_strerror(err_code), "Failed to call x509_crt_parse");
         }
+
         err_code = mbedtls_ssl_config_defaults(&conf, MBEDTLS_SSL_IS_CLIENT, MBEDTLS_SSL_TRANSPORT_STREAM, MBEDTLS_SSL_PRESET_DEFAULT);
         if (err_code != 0)
-            throw SystemError(detail::mbedt_get_errstr(err_code), "Failed to call ssl_config_defaults");
+            throw SystemError(detail::mbedtls_get_strerror(err_code), "Failed to call ssl_config_defaults");
 
         mbedtls_ssl_conf_authmode(&conf, MBEDTLS_SSL_VERIFY_OPTIONAL);
         mbedtls_ssl_conf_ca_chain(&conf, &cacert, NULL);
 
-        /* SSLv3 is deprecated, set minimum to TLS 1.0 */
+        // Set minimum to TLS 3.1
         mbedtls_ssl_conf_min_version(&conf, MBEDTLS_SSL_MAJOR_VERSION_3, MBEDTLS_SSL_MINOR_VERSION_1);
 
         mbedtls_ssl_conf_rng(&conf, mbedtls_ctr_drbg_random, &ctr_drbg);
@@ -482,7 +543,7 @@ public:
 
         err_code = mbedtls_ssl_setup(&ssl, &conf);
         if (err_code != 0)
-            throw SystemError(detail::mbedt_get_errstr(err_code), "Failed to call ssl_setup");
+            throw SystemError(detail::mbedtls_get_strerror(err_code), "Failed to call ssl_setup");
     }
 
     void reset()
@@ -608,9 +669,9 @@ public:
             //  Initiate a connection with host:port in the given protocol.
             err_code = mbedtls_net_connect(
                 reinterpret_cast<mbedtls_net_context *>(&endpoint),
-                uri.host.c_str(), uri.port.c_str(), MBEDTLS_NET_PROTO_TCP);
+                uri.authority.host.c_str(), uri.authority.port.c_str(), MBEDTLS_NET_PROTO_TCP);
             if (err_code != 0)
-                throw SystemError(detail::mbedt_get_errstr(err_code), "Failed to create SSL socket");
+                throw SystemError(detail::mbedtls_get_strerror(err_code), "Failed to create SSL socket");
 
             mbedtls_ssl_set_bio(&sslctx.ssl, (mbedtls_net_context *)&endpoint, mbedtls_net_send, mbedtls_net_recv, NULL);
 
@@ -620,7 +681,7 @@ public:
             } while ((err_code != 0) && ((err_code == MBEDTLS_ERR_SSL_WANT_READ) || (err_code == MBEDTLS_ERR_SSL_WANT_WRITE)));
 
             if (err_code != 0)
-                throw SystemError(detail::mbedt_get_errstr(err_code), "Failed to call ssl_handshake");
+                throw SystemError(detail::mbedtls_get_strerror(err_code), "Failed to call ssl_handshake");
         } else {
             // Open the endpoint.
             endpoint = socket(internet_protocol.getAddressFamily(), SOCK_STREAM, IPPROTO_TCP);
@@ -661,7 +722,7 @@ public:
             // Set the socket non - blocking.
             err_code = mbedtls_net_set_nonblock((mbedtls_net_context *)&endpoint);
             if (err_code != 0)
-                throw SystemError(detail::mbedt_get_errstr(err_code), "Failed to set socket non-blocking");
+                throw SystemError(detail::mbedtls_get_strerror(err_code), "Failed to set socket non-blocking");
         } else {
             int flags;
             if ((flags = ::fcntl(endpoint, F_GETFL)) < 0)
@@ -709,7 +770,7 @@ public:
 
         if (result < 0) {
             if (use_ssl) {
-                throw SystemError(detail::mbedt_get_errstr(static_cast<int>(result)), "Failed to send data");
+                throw SystemError(detail::mbedtls_get_strerror(static_cast<int>(result)), "Failed to send data");
             } else {
                 throw SystemError(detail::getLastError(), "Failed to send data");
             }
@@ -755,7 +816,7 @@ public:
                 break;
             default:
                 if (use_ssl) {
-                    throw SystemError(detail::mbedt_get_errstr(static_cast<int>(result)), "Failed to read data");
+                    throw SystemError(detail::mbedtls_get_strerror(static_cast<int>(result)), "Failed to read data");
                 } else {
                     throw SystemError(detail::getLastError(), "Failed to read data");
                 }
@@ -916,15 +977,13 @@ bool isObsoleteTextChar(const C c)
            static_cast<unsigned char>(c) <= 0xFF;
 }
 
-template <class Iterator>
 Iterator skipWhiteSpaces(const Iterator begin, const Iterator end)
 {
-    Iterator i = begin;
-    for (i = begin; i != end; ++i)
-        if (!isWhiteSpaceChar(*i))
+    Iterator it = begin;
+    for (it = begin; it != end; ++it)
+        if (!isWhiteSpaceChar(*it))
             break;
-
-    return i;
+    return it;
 }
 
 // RFC 5234, Appendix B.1. Core Rules
@@ -962,30 +1021,29 @@ inline char toLower(const char c)
 }
 
 // RFC 3986, 3. Syntax Components
-template <class Iterator>
-Uri parseUri(const Iterator begin, const Iterator end)
+Uri parseUri(const std::string::const_iterator begin, const std::string::const_iterator end)
 {
     Uri result;
 
     // RFC 3986, 3.1. Scheme
-    Iterator i = begin;
-    if (i == end || !isAlphaChar(*begin))
+    std::string::const_iterator it = begin;
+    if (it == end || !isAlphaChar(*begin))
         throw RequestError("Invalid scheme");
 
-    result.scheme.push_back(*i++);
+    result.scheme.push_back(*it++);
 
-    for (; i != end && (isAlphaChar(*i) || isDigitChar(*i) || *i == '+' || *i == '-' || *i == '.'); ++i)
-        result.scheme.push_back(*i);
+    for (; it != end && (isAlphaChar(*it) || isDigitChar(*it) || *it == '+' || *it == '-' || *it == '.'); ++it)
+        result.scheme.push_back(*it);
 
-    if (i == end || *i++ != ':')
+    if (it == end || *it++ != ':')
         throw RequestError("Invalid scheme");
-    if (i == end || *i++ != '/')
+    if (it == end || *it++ != '/')
         throw RequestError("Invalid scheme");
-    if (i == end || *i++ != '/')
+    if (it == end || *it++ != '/')
         throw RequestError("Invalid scheme");
 
     // RFC 3986, 3.2. Authority
-    std::string authority = std::string(i, end);
+    std::string authority = std::string(it, end);
 
     // RFC 3986, 3.5. Fragment
     const std::string::size_type fragmentPosition = authority.find('#');
@@ -1018,196 +1076,181 @@ Uri parseUri(const Iterator begin, const Iterator end)
 
         const std::string::size_type passwordPosition = userinfo.find(':');
         if (passwordPosition != std::string::npos) {
-            result.user     = userinfo.substr(0, passwordPosition);
-            result.password = userinfo.substr(passwordPosition + 1);
+            result.authority.user     = userinfo.substr(0, passwordPosition);
+            result.authority.password = userinfo.substr(passwordPosition + 1);
         } else
-            result.user = userinfo;
+            result.authority.user = userinfo;
 
-        result.host = authority.substr(hostPosition + 1);
+        result.authority.host = authority.substr(hostPosition + 1);
     } else
-        result.host = authority;
+        result.authority.host = authority;
 
     // RFC 3986, 3.2.2. Host
-    const std::string::size_type portPosition = result.host.find(':');
+    const std::string::size_type portPosition = result.authority.host.find(':');
     if (portPosition != std::string::npos) {
         // RFC 3986, 3.2.3. Port
-        result.port = result.host.substr(portPosition + 1);
-        result.host.resize(portPosition);
+        result.authority.port = result.authority.host.substr(portPosition + 1);
+        result.authority.host.resize(portPosition);
     } else if (result.scheme == "http") {
-        result.port = "80";
+        result.authority.port = "80";
     } else if (result.scheme == "https") {
-        result.port = "443";
+        result.authority.port = "443";
     }
     return result;
 }
 
 // RFC 7230, 2.6. Protocol Versioning
-template <class Iterator>
+
 std::pair<Iterator, HttpVersion> parseHttpVersion(const Iterator begin, const Iterator end)
 {
-    Iterator i = begin;
-
-    if (i == end || *i++ != 'H')
+    Iterator it = begin;
+    if (it == end || *it++ != 'H')
         throw ResponseError("Invalid HTTP version");
-    if (i == end || *i++ != 'T')
+    if (it == end || *it++ != 'T')
         throw ResponseError("Invalid HTTP version");
-    if (i == end || *i++ != 'T')
+    if (it == end || *it++ != 'T')
         throw ResponseError("Invalid HTTP version");
-    if (i == end || *i++ != 'P')
+    if (it == end || *it++ != 'P')
         throw ResponseError("Invalid HTTP version");
-    if (i == end || *i++ != '/')
+    if (it == end || *it++ != '/')
         throw ResponseError("Invalid HTTP version");
-    if (i == end)
+    if (it == end)
         throw ResponseError("Invalid HTTP version");
-    const uint16_t majorVersion = digitToUint<uint16_t>(*i++);
-    if (i == end || *i++ != '.')
+    const uint16_t majorVersion = detail::digitToUint<uint16_t>(*it++);
+    if (it == end || *it++ != '.')
         throw ResponseError("Invalid HTTP version");
-    if (i == end)
+    if (it == end)
         throw ResponseError("Invalid HTTP version");
-    const uint16_t minorVersion = digitToUint<uint16_t>(*i++);
-    return std::make_pair(i, HttpVersion(majorVersion, minorVersion));
+    const uint16_t minorVersion = detail::digitToUint<uint16_t>(*it++);
+    return std::make_pair(it, HttpVersion(majorVersion, minorVersion));
 }
 
 // RFC 7230, 3.1.2. Status Line
-template <class Iterator>
+
 std::pair<Iterator, uint16_t> parseStatusCode(const Iterator begin, const Iterator end)
 {
     uint16_t result = 0;
-    Iterator i      = begin;
-    while (i != end && isDigitChar(*i))
-        result = static_cast<uint16_t>(result * 10U) + digitToUint<uint16_t>(*i++);
-    if (std::distance(begin, i) != 3)
+    Iterator it     = begin;
+    while (it != end && isDigitChar(*it))
+        result = static_cast<uint16_t>(result * 10U) + digitToUint<uint16_t>(*it++);
+    if (std::distance(begin, it) != 3)
         throw ResponseError("Invalid status code");
-    return std::make_pair(i, result);
+    return std::make_pair(it, result);
 }
 
 // RFC 7230, 3.1.2. Status Line
-template <class Iterator>
+
 std::pair<Iterator, std::string> parseReasonPhrase(const Iterator begin, const Iterator end)
 {
     std::string result;
-    Iterator i = begin;
-    for (; i != end && (isWhiteSpaceChar(*i) || isVisibleChar(*i) || isObsoleteTextChar(*i)); ++i)
-        result.push_back(static_cast<char>(*i));
-    return std::make_pair(i, result);
+    Iterator it = begin;
+    for (; it != end && (isWhiteSpaceChar(*it) || isVisibleChar(*it) || isObsoleteTextChar(*it)); ++it)
+        result.push_back(static_cast<char>(*it));
+    return std::make_pair(it, result);
 }
 
 // RFC 7230, 3.2.6. Field Value Components
-template <class Iterator>
+
 std::pair<Iterator, std::string> parseToken(const Iterator begin, const Iterator end)
 {
     std::string result;
-
-    Iterator i = begin;
-    for (; i != end && isTokenChar(*i); ++i)
-        result.push_back(static_cast<char>(*i));
-
+    Iterator it = begin;
+    for (; it != end && isTokenChar(*it); ++it)
+        result.push_back(static_cast<char>(*it));
     if (result.empty())
         throw ResponseError("Invalid token");
-
-    return std::make_pair(i, result);
+    return std::make_pair(it, result);
 }
 
 // trim from start
-static inline std::string &ltrim(std::string &s)
+inline std::string &ltrim(std::string &s)
 {
-    s.erase(s.begin(), std::find_if(s.begin(), s.end(),
-                                    std::not1(std::ptr_fun<int, int>(std::isspace))));
+    s.erase(s.begin(), std::find_if(s.begin(), s.end(), std::not1(std::ptr_fun<int, int>(std::isspace))));
     return s;
 }
 
 // trim from end
-static inline std::string &rtrim(std::string &s)
+inline std::string &rtrim(std::string &s)
 {
-    s.erase(std::find_if(s.rbegin(), s.rend(),
-                         std::not1(std::ptr_fun<int, int>(std::isspace)))
-                .base(),
-            s.end());
+    s.erase(std::find_if(s.rbegin(), s.rend(), std::not1(std::ptr_fun<int, int>(std::isspace))).base(), s.end());
     return s;
 }
 
 // trim from both ends
-static inline std::string &trim(std::string &s)
+inline std::string &trim(std::string &s)
 {
-    return ltrim(rtrim(s));
+    return detail::ltrim(detail::rtrim(s));
 }
 
 // RFC 7230, 3.2. Header Fields
-template <class Iterator>
-std::pair<Iterator, std::string> parseFieldValue(const Iterator begin, const Iterator end)
+
+inline std::pair<Iterator, std::string> parseFieldValue(const Iterator begin, const Iterator end)
 {
     std::string result;
-    Iterator i = begin;
-    for (; i != end && (isWhiteSpaceChar(*i) || isVisibleChar(*i) || isObsoleteTextChar(*i)); ++i)
-        result.push_back(static_cast<char>(*i));
-    // trim white spaces
-    return std::make_pair(i, trim(result));
+    Iterator it = begin;
+    for (; it != end && (detail::isWhiteSpaceChar(*it) || detail::isVisibleChar(*it) || detail::isObsoleteTextChar(*it)); ++it)
+        result.push_back(static_cast<char>(*it));
+    // Trim white spaces.
+    return std::make_pair(it, trim(result));
 }
 
 // RFC 7230, 3.2. Header Fields
-template <class Iterator>
-std::pair<Iterator, std::string> parseFieldContent(const Iterator begin, const Iterator end)
+
+inline std::pair<Iterator, std::string> parseFieldContent(const Iterator begin, const Iterator end)
 {
+    std::pair<Iterator, std::string> field_value;
+    Iterator it = begin, obsolete_fold_it;
     std::string result;
-
-    Iterator i = begin;
-
     for (;;) {
-        const std::pair<Iterator, std::string> fieldValueResult = parseFieldValue(i, end);
-        i                                                       = fieldValueResult.first;
-        result += fieldValueResult.second;
-
+        field_value = detail::parseFieldValue(it, end);
+        it          = field_value.first;
+        result += field_value.second;
         // Handle obsolete fold as per RFC 7230, 3.2.4. Field Parsing
         // Obsolete folding is known as linear white space (LWS) in RFC 2616, 2.2 Basic Rules
-        Iterator obsoleteFoldIterator = i;
-        if (obsoleteFoldIterator == end || *obsoleteFoldIterator++ != '\r')
+        obsolete_fold_it = it;
+        if (obsolete_fold_it == end || *obsolete_fold_it++ != '\r')
             break;
-
-        if (obsoleteFoldIterator == end || *obsoleteFoldIterator++ != '\n')
+        if (obsolete_fold_it == end || *obsolete_fold_it++ != '\n')
             break;
-
-        if (obsoleteFoldIterator == end || !isWhiteSpaceChar(*obsoleteFoldIterator++))
+        if (obsolete_fold_it == end || !isWhiteSpaceChar(*obsolete_fold_it++))
             break;
-
         result.push_back(' ');
-        i = obsoleteFoldIterator;
+        it = obsolete_fold_it;
     }
-
-    return std::make_pair(i, result);
+    return std::make_pair(it, result);
 }
 
 // RFC 7230, 3.2. Header Fields
-template <class Iterator>
+
 std::pair<Iterator, HeaderField> parseHeaderField(const Iterator begin, const Iterator end)
 {
     std::pair<Iterator, std::string> tokenResult = detail::parseToken(begin, end);
-    Iterator i                                   = tokenResult.first;
+    Iterator it                                  = tokenResult.first;
     std::string field_name                       = tokenResult.second;
 
-    if (i == end || *i++ != ':')
-        throw ResponseError("Invalid header");
+    if ((it == end) || *it++ != ':')
+        throw ResponseError("Invalid header field = " + field_name);
 
-    i = skipWhiteSpaces(i, end);
+    it = skipWhiteSpaces(it, end);
 
-    std::pair<Iterator, std::string> valueResult = parseFieldContent(i, end);
-    i                                            = valueResult.first;
-    std::string fieldValue                       = valueResult.second;
+    std::pair<Iterator, std::string> valueResult = detail::parseFieldContent(it, end);
+    it                                           = valueResult.first;
+    std::string field_value                      = valueResult.second;
 
-    if (i == end || *i++ != '\r')
-        throw ResponseError("Invalid header");
-
-    if (i == end || *i++ != '\n')
-        throw ResponseError("Invalid header");
+    if ((it == end) || *it++ != '\r')
+        throw ResponseError("Invalid header field (missing \\r) = " + field_name + ":" + field_value);
+    if ((it == end) || *it++ != '\n')
+        throw ResponseError("Invalid header field (missing \\n) = " + field_name + ":" + field_value);
 
     // Transform the field name to lower-case letters.
     std::transform(field_name.begin(), field_name.end(), field_name.begin(), detail::toLower);
 
     // Return the field name and value.
-    return std::make_pair(i, HeaderField(field_name, fieldValue));
+    return std::make_pair(it, HeaderField(field_name, field_value));
 }
 
 // RFC 7230, 3.1.2. Status Line
-template <class Iterator>
+
 std::pair<Iterator, Status> parseStatusLine(const Iterator begin, const Iterator end)
 {
     std::pair<Iterator, HttpVersion> http_version;
@@ -1239,8 +1282,8 @@ template <typename T, class Iterator>
 T stringToUint(const Iterator begin, const Iterator end)
 {
     T result = 0;
-    for (Iterator i = begin; i != end; ++i)
-        result = T(10U) * result + digitToUint<T>(*i);
+    for (Iterator it = begin; it != end; ++it)
+        result = T(10U) * result + digitToUint<T>(*it);
     return result;
 }
 
@@ -1248,8 +1291,8 @@ template <typename T, class Iterator>
 T hexStringToUint(const Iterator begin, const Iterator end)
 {
     T result = 0;
-    for (Iterator i = begin; i != end; ++i)
-        result = static_cast<T>(16 * result) + detail::hexDigitToUint<T>(*i);
+    for (Iterator it = begin; it != end; ++it)
+        result = static_cast<T>(16 * result) + detail::hexDigitToUint<T>(*it);
     return result;
 }
 
@@ -1278,8 +1321,8 @@ inline std::string encodeHeaderFields(const HeaderFields &header_fields)
 }
 
 // RFC 4648, 4. Base 64 Encoding
-template <class Iterator>
-std::string encodeBase64(const Iterator begin, const Iterator end)
+
+std::string encodeBase64(const std::string::const_iterator begin, const std::string::const_iterator end)
 {
     char chars[64] = {
         'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M',
@@ -1293,8 +1336,8 @@ std::string encodeBase64(const Iterator begin, const Iterator end)
     std::size_t c = 0;
     uint8_t charArray[3];
 
-    for (Iterator i = begin; i != end; ++i) {
-        charArray[c++] = static_cast<uint8_t>(*i);
+    for (std::string::const_iterator it = begin; it != end; ++it) {
+        charArray[c++] = static_cast<uint8_t>(*it);
         if (c == 3) {
             result += chars[static_cast<uint8_t>((charArray[0] & 0xFC) >> 2)];
             result += chars[static_cast<uint8_t>(((charArray[0] & 0x03) << 4) + ((charArray[1] & 0xF0) >> 4))];
@@ -1321,10 +1364,10 @@ std::string encodeBase64(const Iterator begin, const Iterator end)
     return result;
 }
 
-inline std::vector<uint8_t> encodeHtml(const Uri &uri,
-                                       const std::string &method,
-                                       const std::vector<uint8_t> &body,
-                                       HeaderFields header_fields)
+inline Data encodeHtml(const Uri &uri,
+                       const std::string &method,
+                       const Data &body,
+                       HeaderFields header_fields)
 {
     //if (uri.scheme != "http")
     //    throw RequestError("Only HTTP scheme is supported");
@@ -1333,23 +1376,24 @@ inline std::vector<uint8_t> encodeHtml(const Uri &uri,
     const std::string requestTarget = uri.path + (uri.query.empty() ? "" : '?' + uri.query);
 
     // RFC 7230, 5.4. Host
-    header_fields.push_back(HeaderField("Host", uri.host));
+    header_fields.push_back(HeaderField("Host", uri.authority.host));
 
     // RFC 7230, 3.3.2. Content-Length
     header_fields.push_back(HeaderField("Content-Length", detail::numberToString(body.size())));
 
     // RFC 7617, 2. The 'Basic' Authentication Scheme
-    if (!uri.user.empty() || !uri.password.empty()) {
-        std::string userinfo = uri.user + ':' + uri.password;
-        header_fields.push_back(HeaderField("Authorization", "Basic " + encodeBase64(userinfo.begin(), userinfo.end())));
+    if (!uri.authority.user.empty() || !uri.authority.password.empty()) {
+        std::string userinfo = uri.authority.user + ':' + uri.authority.password;
+        header_fields.push_back(HeaderField("Authorization", "Basic " + detail::encodeBase64(userinfo.begin(), userinfo.end())));
     }
 
-    const std::string headerData = encodeRequestLine(method, requestTarget) +
-                                   encodeHeaderFields(header_fields) +
+    const std::string headerData = detail::encodeRequestLine(method, requestTarget) +
+                                   detail::encodeHeaderFields(header_fields) +
                                    "\r\n";
 
-    std::vector<uint8_t> result(headerData.begin(), headerData.end());
+    Data result(headerData.begin(), headerData.end());
     result.insert(result.end(), body.begin(), body.end());
+    result.push_back(0);
 
     return result;
 }
@@ -1385,13 +1429,13 @@ public:
     {
         return this->send(
             method,
-            std::vector<uint8_t>(body.begin(), body.end()),
+            Data(body.begin(), body.end()),
             header_fields,
             timeout);
     }
 
     Response send(const std::string &method,
-                  const std::vector<uint8_t> &body,
+                  const Data &body,
                   const HeaderFields &header_fields = HeaderFields(),
                   const std::time_t timeout         = std::time_t(-1))
     {
@@ -1403,13 +1447,13 @@ public:
         hints.ai_socktype = SOCK_STREAM;
         // Translate name of a service location and/or a service name to set of socket addresses.
         addrinfo *_info;
-        if (getaddrinfo(uri.host.c_str(), uri.port.c_str(), &hints, &_info) != 0)
-            throw SystemError(detail::getLastError(), "Failed to get address info of " + uri.host);
+        if (getaddrinfo(uri.authority.host.c_str(), uri.authority.port.c_str(), &hints, &_info) != 0)
+            throw SystemError(detail::getLastError(), "Failed to get address info of " + uri.authority.host);
         // Make a copy and then free the other.
         addrinfo info = *_info;
         freeaddrinfo(_info);
         // Encode the request.
-        const std::vector<uint8_t> request_data = detail::encodeHtml(uri, method, body, header_fields);
+        const Data request_data = detail::encodeHtml(uri, method, body, header_fields);
         // Create the socket.
         detail::Socket socket(internet_protocol);
         // Take the first address from the list
@@ -1419,42 +1463,44 @@ public:
         const uint8_t *sendData = request_data.data();
 
         // Send the request.
+        logging::debug("Sending request...\n");
         while (remaining > 0) {
+            logging::debug("REQUEST:\n%s\n", sendData);
             size = socket.send(sendData, remaining, (timeout >= 0) ? detail::getRemainingMilliseconds(stop_time) : -1);
             remaining -= size;
             sendData += size;
         }
 
         uint8_t buffer[BUFSIZ];
-        std::vector<uint8_t> crlf;
+        Data crlf;
         crlf.push_back('\r');
         crlf.push_back('\n');
-        std::vector<uint8_t> header_end;
+        Data header_end;
         header_end.push_back('\r');
         header_end.push_back('\n');
         header_end.push_back('\r');
         header_end.push_back('\n');
 
         Response response;
-        std::vector<uint8_t> response_data;
-        bool parsing_header           = true;
-        bool content_length_received  = false;
-        std::size_t content_length    = 0U;
-        bool chunked_response         = false;
-        std::size_t expectedChunkSize = 0U;
-        bool removeCrlfAfterChunk     = false;
+        Data response_data;
+        bool parsing_header          = true;
+        bool content_length_received = false;
+        bool chunked_response        = false;
+        bool remove_crlf_after_chunk = false;
 
-        typedef std::vector<uint8_t>::iterator Iterator;
+        std::size_t expected_chunk_size = 0U;
+        std::size_t content_length      = 0U;
+
+        typedef Data::iterator Iterator;
         typedef std::pair<Iterator, Status> StatusLine;
         typedef std::pair<Iterator, HeaderField> HeaderFieldLine;
 
-        Iterator header_begin_it, header_end_it, it;
+        Iterator begin_it, end_it, it;
         StatusLine status_line;
         HeaderFieldLine header_field_line;
 
         // read the response
         while (true) {
-            logging::debug("Reading...\n");
             size = socket.recv(buffer, sizeof(buffer), (timeout >= 0) ? detail::getRemainingMilliseconds(stop_time) : -1);
             logging::debug("We read %d bytes.\n", size);
 
@@ -1472,26 +1518,23 @@ public:
 
             // We are still parsing the header.
             if (parsing_header) {
-                logging::debug("Parsig header...\n");
-
                 // Save the beginning of the header.
-                header_begin_it = response_data.begin();
-
+                begin_it = response_data.begin();
                 // RFC 7230, 3. Message Format
                 // Empty line indicates the end of the header section (RFC 7230, 2.1. Client/Server Messaging)
-                header_end_it = std::search(response_data.begin(), response_data.end(), header_end.begin(), header_end.end());
+                end_it = std::search(response_data.begin(), response_data.end(), header_end.begin(), header_end.end());
 
-                // Cannot find the end of the header.
-                if (header_end_it == response_data.end()) {
-                    logging::warning("We cannot find the end of the header.\n");
+                // Cannot find the end of the header, keep reading.
+                if (end_it == response_data.end()) {
                     continue;
                 }
-
                 // Include the first newline.
-                header_end_it += 2;
+                end_it += 2;
+
+                logging::debug("Parsig header...\n");
 
                 // Parse the status line.
-                status_line = detail::parseStatusLine(header_begin_it, header_end_it);
+                status_line = detail::parseStatusLine(begin_it, end_it);
                 // Get the iterator after the status line.
                 it = status_line.first;
                 // Save the status.
@@ -1499,16 +1542,13 @@ public:
 
                 for (;;) {
                     // Read the header field.
-                    header_field_line = detail::parseHeaderField(it, header_end_it);
-
+                    header_field_line = detail::parseHeaderField(it, end_it);
                     // Move the iterator after the field we just read.
                     it = header_field_line.first;
-
                     // Get the field name.
                     std::string field_name = header_field_line.second.first;
                     // Get the field value.
                     std::string field_value = header_field_line.second.second;
-
                     if (field_name == "transfer-encoding") {
                         // RFC 7230, 3.3.1. Transfer-Encoding
                         if (field_value == "chunked")
@@ -1522,19 +1562,14 @@ public:
                         response.body.reserve(content_length);
                         logging::debug("Reserving %d bytes for the body.\n", content_length);
                     }
-
                     response.header_fields.push_back(HeaderField(field_name, field_value));
-
-                    if (it == header_end_it)
+                    if (it == end_it)
                         break;
                 }
-
                 // Include the second and last newline.
-                header_end_it += 2;
-
+                end_it += 2;
                 // Erease the header.
-                response_data.erase(header_begin_it, header_end_it);
-
+                response_data.erase(begin_it, end_it);
                 // We finished parsing the header.
                 parsing_header = false;
 
@@ -1547,43 +1582,55 @@ public:
                     logging::debug("Parsing chunked response...\n");
                     // RFC 7230, 4.1. Chunked Transfer Coding
                     for (;;) {
-                        if (expectedChunkSize > 0) {
-                            const size_t to_write = std::min(expectedChunkSize, response_data.size());
-                            response.body.insert(response.body.end(), response_data.begin(),
-                                                 response_data.begin() + static_cast<std::ptrdiff_t>(to_write));
-                            std::cout << "response.body.insert[1](" << to_write << ") :" << response.body.size() << "\n";
-                            response_data.erase(response_data.begin(),
-                                                response_data.begin() + static_cast<std::ptrdiff_t>(to_write));
-                            expectedChunkSize -= to_write;
-
-                            if (expectedChunkSize == 0)
-                                removeCrlfAfterChunk = true;
+                        if (expected_chunk_size) {
+                            // Get the amount of data that must be written.
+                            const size_t to_write = std::min(expected_chunk_size, response_data.size());
+                            // Save the beginning of the chunk.
+                            begin_it = response_data.begin();
+                            // Compute the end of the chunk.
+                            end_it = response_data.begin() + static_cast<std::ptrdiff_t>(to_write);
+                            // Insert the data inside the body.
+                            response.body.insert(response.body.end(), begin_it, end_it);
+                            // Clear the chunk from the response.
+                            response_data.erase(begin_it, end_it);
+                            // Decrease the chunk size.
+                            expected_chunk_size -= to_write;
+                            // If we have completely read the chunk, we must clear the CRLF after the chunk.
+                            if (expected_chunk_size == 0)
+                                remove_crlf_after_chunk = true;
+                            // However, if there is no more data to parse, we must stop parsing and RECEIVE more data.
                             if (response_data.empty())
                                 break;
                         } else {
-                            if (removeCrlfAfterChunk) {
-                                if (response_data.size() < 2)
+                            if (remove_crlf_after_chunk) {
+                                if (response_data.size() < 2) {
+                                    logging::debug("There is no CRLF...\n");
                                     break;
-
+                                }
+                                // There must be a CRLF.
                                 if (!std::equal(crlf.begin(), crlf.end(), response_data.begin()))
-                                    throw ResponseError("Invalid chunk");
-
-                                removeCrlfAfterChunk = false;
+                                    throw ResponseError("Invalid chunk, no CRLF");
+                                // Remove the CRLF.
                                 response_data.erase(response_data.begin(), response_data.begin() + 2);
+                                // We removed the CRLF.
+                                remove_crlf_after_chunk = false;
                             }
-
-                            Iterator i = std::search(response_data.begin(), response_data.end(), crlf.begin(), crlf.end());
-
-                            if (i == response_data.end())
+                            // Search for CRLF.
+                            it = std::search(response_data.begin(), response_data.end(), crlf.begin(), crlf.end());
+                            if (it == response_data.end()) {
+                                logging::debug("There is no CRLF stopping...\n");
                                 break;
-
-                            expectedChunkSize = detail::hexStringToUint<uint8_t, Iterator>(response_data.begin(), i);
-
-                            response_data.erase(response_data.begin(), i + 2);
-
-                            if (expectedChunkSize == 0) {
+                            }
+                            // Reading the expected chunk size.
+                            expected_chunk_size = detail::hexStringToUint<std::size_t, Iterator>(response_data.begin(), it);
+                            // Erasing the size.
+                            response_data.erase(response_data.begin(), it + 2);
+                            // If the expected_chunk_size is zero, terminate.
+                            if (expected_chunk_size == 0) {
+                                logging::debug("Terminating chunked response.\n");
                                 return response;
                             }
+                            logging::debug("Expected chunk size = %d\n", expected_chunk_size);
                         }
                     }
                 } else {

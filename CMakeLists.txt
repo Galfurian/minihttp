@@ -99,6 +99,7 @@ if(DOXYGEN_FOUND)
         FetchContent_MakeAvailable(doxygenawesome)
     endif()
 
+    set(DOXYGEN_WARN_FORMAT "$file($line): $text")
     set(DOXYGEN_USE_MDFILE_AS_MAINPAGE README.md)
     set(DOXYGEN_GENERATE_TREEVIEW YES)
     set(DOXYGEN_HTML_HEADER ${doxygenawesome_SOURCE_DIR}/doxygen-custom/header.html)
