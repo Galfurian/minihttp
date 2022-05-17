@@ -13,11 +13,10 @@ cmake_minimum_required(VERSION 3.1)
 # Set the project name.
 project(minihttp CXX)
 
-# Set C++ Standard.
-set(CMAKE_CXX_STANDARD 98)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS OFF)
+# We need this in order to import external projects.
+include(FetchContent)
 
+# Extend the CMake module path.
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/")
 
 # -----------------------------------------------------------------------------
@@ -28,25 +27,23 @@ option(WARNINGS_AS_ERRORS "Treat all warnings as errors" OFF)
 option(BUILD_EXAMPLES "Build examples" OFF)
 
 # -----------------------------------------------------------------------------
+# DEPENDENCIES
+# -----------------------------------------------------------------------------
+find_package(mbedtls REQUIRED)
+
+# -----------------------------------------------------------------------------
 # LIBRARY
 # -----------------------------------------------------------------------------
 # Add the C++ library.
 add_library(${PROJECT_NAME} INTERFACE)
 add_library(${PROJECT_NAME}::${PROJECT_NAME} ALIAS ${PROJECT_NAME})
 # Inlcude header directories.
-target_include_directories(${PROJECT_NAME} INTERFACE ${PROJECT_SOURCE_DIR}/include)
+target_include_directories(${PROJECT_NAME} INTERFACE ${PROJECT_SOURCE_DIR}/include ${MBEDTLS_INCLUDE_DIRS})
+# Link libraries.
+target_link_libraries(${PROJECT_NAME} INTERFACE mbedtls mbedx509 mbedcrypto)
 if(WIN32)
     target_link_libraries(${PROJECT_NAME} INTERFACE ws2_32)
 endif()
-
-# -----------------------------------------------------------------------------
-# DEPENDENCIES
-# -----------------------------------------------------------------------------
-find_package(mbedtls REQUIRED)
-# Inlcude header directories.
-target_include_directories(${PROJECT_NAME} INTERFACE ${MBEDTLS_INCLUDE_DIRS})
-# Link libraries.
-target_link_libraries(${PROJECT_NAME} INTERFACE mbedtls mbedx509 mbedcrypto)
 
 # -----------------------------------------------------------------------------
 # Set the compilation flags.
@@ -83,9 +80,6 @@ endif()
 # -----------------------------------------------------------------------------
 find_package(Doxygen)
 if(DOXYGEN_FOUND)
-    # Doxygen theme
-    include(FetchContent)
-
     message(STATUS "Retrieving `doxygen-awesome-css`...")
     FetchContent_Declare(
         doxygenawesome

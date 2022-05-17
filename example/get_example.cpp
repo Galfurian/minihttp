@@ -3,10 +3,15 @@
 
 #include "minihttp.hpp"
 
-int main(int, const char *[])
+int main(int argc, const char *argv[])
 {
+    if (argc != 2) {
+        std::cerr << "Usage :\n";
+        std::cerr << "    " << argv[0] << " <discord-webhook>\n";
+        return 1;
+    }
     try {
-        std::string uri       = "https://discord.com/api/webhooks/...";
+        std::string uri       = argv[1];
         std::string method    = "GET";
         std::string arguments = "";
 
