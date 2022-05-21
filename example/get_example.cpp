@@ -18,6 +18,7 @@ int main(int argc, const char *argv[])
         http::Request request(uri, http::InternetProtocol::V4);
         http::HeaderFields fields;
         fields.push_back(http::HeaderField("Content-Type", "application/x-www-form-urlencoded"));
+        //fields.push_back(http::HeaderField("Content-Type", "application/json"));
         fields.push_back(http::HeaderField("User-Agent", "runscope/0.1"));
         fields.push_back(http::HeaderField("Accept", "*/*"));
 

@@ -419,15 +419,97 @@ struct Response {
     Data body;
 };
 
-namespace detail
+namespace tls
 {
 
-const char *mbedtls_get_strerror(int err)
+inline const char *get_strerror(int err)
 {
     static char error_text[256];
     mbedtls_strerror(err, error_text, sizeof(error_text));
     return error_text;
 }
+
+inline void print_trace(void *, int level, const char *file, int line, const char *str)
+{
+    printf("ssl(%s:%04d) [%d] %s\n", file, line, level, str);
+}
+
+class SSLContext {
+public:
+    mbedtls_entropy_context entropy;
+    mbedtls_ctr_drbg_context ctr_drbg;
+    mbedtls_ssl_context ssl;
+    mbedtls_x509_crt cacert;
+    mbedtls_ssl_config conf;
+
+    SSLContext()
+        : entropy(),
+          ctr_drbg(),
+          ssl(),
+          cacert(),
+          conf()
+    {
+        mbedtls_entropy_init(&entropy);
+        mbedtls_x509_crt_init(&cacert);
+        mbedtls_ssl_init(&ssl);
+        mbedtls_ctr_drbg_init(&ctr_drbg);
+        mbedtls_ssl_config_init(&conf);
+    }
+
+    ~SSLContext()
+    {
+        mbedtls_entropy_free(&entropy);
+        mbedtls_x509_crt_free(&cacert);
+        mbedtls_ssl_free(&ssl);
+        mbedtls_ctr_drbg_free(&ctr_drbg);
+        mbedtls_ssl_config_free(&conf);
+    }
+
+    void init(const std::string &certs)
+    {
+        const char *pers = "minihttp";
+        int err_code;
+
+        // The CTR_DRBG context to seed.
+        err_code = mbedtls_ctr_drbg_seed(&ctr_drbg, mbedtls_entropy_func, &entropy, reinterpret_cast<const unsigned char *>(pers), strlen(pers) + 1);
+        if (err_code != 0)
+            throw SystemError(tls::get_strerror(err_code), "Failed to call ctr_drbg_seed");
+
+        // Parse the certificates and add them to the chained list.
+        if (!certs.empty()) {
+            err_code = mbedtls_x509_crt_parse(&cacert, reinterpret_cast<const unsigned char *>(certs.c_str()), certs.size());
+            if (err_code != 0)
+                throw SystemError(tls::get_strerror(err_code), "Failed to call x509_crt_parse");
+        }
+
+        err_code = mbedtls_ssl_config_defaults(&conf, MBEDTLS_SSL_IS_CLIENT, MBEDTLS_SSL_TRANSPORT_STREAM, MBEDTLS_SSL_PRESET_DEFAULT);
+        if (err_code != 0)
+            throw SystemError(tls::get_strerror(err_code), "Failed to call ssl_config_defaults");
+
+        mbedtls_ssl_conf_authmode(&conf, MBEDTLS_SSL_VERIFY_OPTIONAL);
+        mbedtls_ssl_conf_ca_chain(&conf, &cacert, NULL);
+
+        // Set minimum to TLS 3.1
+        mbedtls_ssl_conf_min_version(&conf, MBEDTLS_SSL_MAJOR_VERSION_3, MBEDTLS_SSL_MINOR_VERSION_1);
+
+        mbedtls_ssl_conf_rng(&conf, mbedtls_ctr_drbg_random, &ctr_drbg);
+        mbedtls_ssl_conf_dbg(&conf, tls::print_trace, NULL);
+
+        err_code = mbedtls_ssl_setup(&ssl, &conf);
+        if (err_code != 0)
+            throw SystemError(tls::get_strerror(err_code), "Failed to call ssl_setup");
+    }
+
+    void reset()
+    {
+        mbedtls_ssl_session_reset(&ssl);
+    }
+};
+
+} // namespace tls
+
+namespace detail
+{
 
 #if defined(_WIN32) || defined(__CYGWIN__)
 class WinSock {
@@ -474,83 +556,6 @@ private:
     bool started = false;
 };
 #endif // defined(_WIN32) || defined(__CYGWIN__)
-
-static inline void _traceprint_ssl(void *, int level, const char *file, int line, const char *str)
-{
-    printf("ssl(%s:%04d) [%d] %s\n", file, line, level, str);
-}
-
-class SSLContext {
-public:
-    mbedtls_entropy_context entropy;
-    mbedtls_ctr_drbg_context ctr_drbg;
-    mbedtls_ssl_context ssl;
-    mbedtls_x509_crt cacert;
-    mbedtls_ssl_config conf;
-
-    SSLContext()
-        : entropy(),
-          ctr_drbg(),
-          ssl(),
-          cacert(),
-          conf()
-    {
-        mbedtls_entropy_init(&entropy);
-        mbedtls_x509_crt_init(&cacert);
-        mbedtls_ssl_init(&ssl);
-        mbedtls_ctr_drbg_init(&ctr_drbg);
-        mbedtls_ssl_config_init(&conf);
-    }
-
-    ~SSLContext()
-    {
-        mbedtls_entropy_free(&entropy);
-        mbedtls_x509_crt_free(&cacert);
-        mbedtls_ssl_free(&ssl);
-        mbedtls_ctr_drbg_free(&ctr_drbg);
-        mbedtls_ssl_config_free(&conf);
-    }
-
-    void init(const std::string &certs)
-    {
-        const char *pers = "minihttp";
-        int err_code;
-
-        // The CTR_DRBG context to seed.
-        err_code = mbedtls_ctr_drbg_seed(&ctr_drbg, mbedtls_entropy_func, &entropy, reinterpret_cast<const unsigned char *>(pers), strlen(pers) + 1);
-        if (err_code != 0)
-            throw SystemError(detail::mbedtls_get_strerror(err_code), "Failed to call ctr_drbg_seed");
-
-        // Parse the certificates and add them to the chained list.
-        if (!certs.empty()) {
-            err_code = mbedtls_x509_crt_parse(&cacert, reinterpret_cast<const unsigned char *>(certs.c_str()), certs.size());
-            if (err_code != 0)
-                throw SystemError(detail::mbedtls_get_strerror(err_code), "Failed to call x509_crt_parse");
-        }
-
-        err_code = mbedtls_ssl_config_defaults(&conf, MBEDTLS_SSL_IS_CLIENT, MBEDTLS_SSL_TRANSPORT_STREAM, MBEDTLS_SSL_PRESET_DEFAULT);
-        if (err_code != 0)
-            throw SystemError(detail::mbedtls_get_strerror(err_code), "Failed to call ssl_config_defaults");
-
-        mbedtls_ssl_conf_authmode(&conf, MBEDTLS_SSL_VERIFY_OPTIONAL);
-        mbedtls_ssl_conf_ca_chain(&conf, &cacert, NULL);
-
-        // Set minimum to TLS 3.1
-        mbedtls_ssl_conf_min_version(&conf, MBEDTLS_SSL_MAJOR_VERSION_3, MBEDTLS_SSL_MINOR_VERSION_1);
-
-        mbedtls_ssl_conf_rng(&conf, mbedtls_ctr_drbg_random, &ctr_drbg);
-        mbedtls_ssl_conf_dbg(&conf, _traceprint_ssl, NULL);
-
-        err_code = mbedtls_ssl_setup(&ssl, &conf);
-        if (err_code != 0)
-            throw SystemError(detail::mbedtls_get_strerror(err_code), "Failed to call ssl_setup");
-    }
-
-    void reset()
-    {
-        mbedtls_ssl_session_reset(&ssl);
-    }
-};
 
 class Socket {
 public:
@@ -637,29 +642,6 @@ public:
         }
 #endif // __APPLE__
 
-#if defined(_WIN32) || defined(__CYGWIN__)
-        auto err_code = ::connect(endpoint, address, addressSize);
-        while (err_code == -1 && WSAGetLastError() == WSAEINTR)
-            err_code = ::connect(endpoint, address, addressSize);
-
-        if (err_code == -1) {
-            if (WSAGetLastError() == WSAEWOULDBLOCK) {
-                select(SelectType::write, timeout);
-
-                char socketErrorPointer[sizeof(int)];
-                socklen_t optionLength = sizeof(socketErrorPointer);
-                if (getsockopt(endpoint, SOL_SOCKET, SO_ERROR, socketErrorPointer, &optionLength) == -1)
-                    throw SystemError(detail::getLastError(), "Failed to get socket option");
-
-                int socketError;
-                std::memcpy(&socketError, socketErrorPointer, sizeof(socketErrorPointer));
-
-                if (socketError != 0)
-                    throw SystemError(socketError, "Failed to connect");
-            } else
-                throw SystemError(detail::getLastError(), "Failed to connect");
-        }
-#else
         if (use_ssl) {
             // Initialize a context.
             mbedtls_net_init((mbedtls_net_context *)&endpoint);
@@ -671,7 +653,7 @@ public:
                 reinterpret_cast<mbedtls_net_context *>(&endpoint),
                 uri.authority.host.c_str(), uri.authority.port.c_str(), MBEDTLS_NET_PROTO_TCP);
             if (err_code != 0)
-                throw SystemError(detail::mbedtls_get_strerror(err_code), "Failed to create SSL socket");
+                throw SystemError(tls::get_strerror(err_code), "Failed to create SSL socket");
 
             mbedtls_ssl_set_bio(&sslctx.ssl, (mbedtls_net_context *)&endpoint, mbedtls_net_send, mbedtls_net_recv, NULL);
 
@@ -681,10 +663,33 @@ public:
             } while ((err_code != 0) && ((err_code == MBEDTLS_ERR_SSL_WANT_READ) || (err_code == MBEDTLS_ERR_SSL_WANT_WRITE)));
 
             if (err_code != 0)
-                throw SystemError(detail::mbedtls_get_strerror(err_code), "Failed to call ssl_handshake");
+                throw SystemError(tls::get_strerror(err_code), "Failed to call ssl_handshake");
         } else {
             // Open the endpoint.
             endpoint = socket(internet_protocol.getAddressFamily(), SOCK_STREAM, IPPROTO_TCP);
+
+#if defined(_WIN32) || defined(__CYGWIN__)
+            // Connect.
+            do {
+                err_code = ::connect(endpoint, address, addressSize);
+            } while (err_code == -1 && WSAGetLastError() == WSAEINTR);
+            // Check if we successfully connected.
+            if (err_code == -1) {
+                if (WSAGetLastError() == WSAEWOULDBLOCK) {
+                    this->select(SelectType::write, timeout);
+                    char socketErrorPointer[sizeof(int)];
+                    socklen_t optionLength = sizeof(socketErrorPointer);
+                    if (getsockopt(endpoint, SOL_SOCKET, SO_ERROR, socketErrorPointer, &optionLength) == -1)
+                        throw SystemError(detail::getLastError(), "Failed to get socket option");
+                    int socketError;
+                    std::memcpy(&socketError, socketErrorPointer, sizeof(socketErrorPointer));
+                    if (socketError != 0)
+                        throw SystemError(socketError, "Failed to connect");
+                } else {
+                    throw SystemError(detail::getLastError(), "Failed to connect");
+                }
+            }
+#else
             // Connect.
             do {
                 err_code = ::connect(endpoint, address, addressSize);
@@ -700,10 +705,10 @@ public:
                     if (socketError != 0)
                         throw SystemError(socketError, "Failed to connect (getsockopt)");
                 } else {
-                    throw SystemError(errno, "Failed to connect (connect)");
+                    throw SystemError(errno, "Failed to connect");
                 }
             }
-
+#endif // defined(_WIN32) || defined(__CYGWIN__)
             if (endpoint == invalid)
                 throw SystemError(detail::getLastError(), "Failed to create socket");
         }
@@ -711,26 +716,32 @@ public:
         // ====================================================================
         // NON-BLOCKING
         // ====================================================================
-#if defined(_WIN32) || defined(__CYGWIN__)
-        ULONG tmp = !!nonblock;
-        if (::ioctlsocket(s, FIONBIO, &tmp) == SOCKET_ERROR) {
-            this->close();
-            throw SystemError(detail::getLastError(), "Failed to set socket non-blocking");
-        }
-#else
         if (use_ssl) {
             // Set the socket non - blocking.
             err_code = mbedtls_net_set_nonblock((mbedtls_net_context *)&endpoint);
-            if (err_code != 0)
-                throw SystemError(detail::mbedtls_get_strerror(err_code), "Failed to set socket non-blocking");
+            if (err_code != 0) {
+                this->close();
+                throw SystemError(detail::getLastError(), "Failed to set socket non-blocking");
+            }
         } else {
+#if defined(_WIN32) || defined(__CYGWIN__)
+            ULONG tmp = !!nonblock;
+            if (::ioctlsocket(s, FIONBIO, &tmp) == SOCKET_ERROR) {
+                this->close();
+                throw SystemError(detail::getLastError(), "Failed to set socket non-blocking");
+            }
+#else
             int flags;
-            if ((flags = ::fcntl(endpoint, F_GETFL)) < 0)
+            if ((flags = ::fcntl(endpoint, F_GETFL)) < 0) {
+                this->close();
                 throw SystemError(detail::getLastError(), "Failed to set socket non-blocking");
-            if (::fcntl(endpoint, F_SETFL, flags | O_NONBLOCK) == -1)
+            }
+            if (::fcntl(endpoint, F_SETFL, flags | O_NONBLOCK) == -1) {
+                this->close();
                 throw SystemError(detail::getLastError(), "Failed to set socket non-blocking");
+            }
+#endif // defined(_WIN32) || defined(__CYGWIN__)
         }
-#endif
 
         // ====================================================================
         // TIMEOUT
@@ -744,33 +755,31 @@ public:
             if (setsockopt(endpoint, SOL_SOCKET, SO_SNDTIMEO, &timeval_timeout, sizeof(timeval_timeout)) < 0)
                 throw SystemError(errno, "Failed to set SND timeout");
         }
-#endif // defined(_WIN32) || defined(__CYGWIN__)
     }
 
     std::size_t send(const void *buffer, const std::size_t length, const int64_t timeout)
     {
         ssize_t result;
-#if defined(_WIN32) || defined(__CYGWIN__)
-        this->select(SelectType::write, timeout);
-        do {
-            result = ::send(endpoint, reinterpret_cast<const char *>(buffer), static_cast<int>(length), 0);
-        } while ((result == -1) && (detail::getLastError() == WSAEINTR));
-#else
         if (use_ssl) {
             do {
                 result = mbedtls_ssl_write(&sslctx.ssl, reinterpret_cast<const unsigned char *>(buffer), length);
             } while (result == MBEDTLS_ERR_SSL_WANT_WRITE);
         } else {
             this->select(SelectType::write, timeout);
+#if defined(_WIN32) || defined(__CYGWIN__)
+            do {
+                result = ::send(endpoint, reinterpret_cast<const char *>(buffer), static_cast<int>(length), 0);
+            } while ((result == -1) && (detail::getLastError() == WSAEINTR));
+#else
             do {
                 result = ::send(endpoint, reinterpret_cast<const char *>(buffer), length, noSignal);
             } while ((result == -1) && (detail::getLastError() == EINTR));
-        }
 #endif // defined(_WIN32) || defined(__CYGWIN__)
-
+        }
         if (result < 0) {
+            this->close();
             if (use_ssl) {
-                throw SystemError(detail::mbedtls_get_strerror(static_cast<int>(result)), "Failed to send data");
+                throw SystemError(tls::get_strerror(static_cast<int>(result)), "Failed to send data");
             } else {
                 throw SystemError(detail::getLastError(), "Failed to send data");
             }
@@ -781,23 +790,22 @@ public:
     std::size_t recv(void *buffer, const std::size_t length, const int64_t timeout)
     {
         ssize_t result;
-#if defined(_WIN32) || defined(__CYGWIN__)
-        this->select(SelectType::read, timeout);
-        do {
-            result = ::recv(endpoint, reinterpret_cast<char *>(buffer), static_cast<int>(length), 0);
-        } while (result == -1 && WSAGetLastError() == WSAEINTR);
-#else
         if (use_ssl) {
             do {
                 result = mbedtls_ssl_read(&sslctx.ssl, reinterpret_cast<unsigned char *>(buffer), length);
             } while (result == MBEDTLS_ERR_SSL_WANT_READ);
         } else {
             this->select(SelectType::read, timeout);
+#if defined(_WIN32) || defined(__CYGWIN__)
+            do {
+                result = ::recv(endpoint, reinterpret_cast<char *>(buffer), static_cast<int>(length), 0);
+            } while (result == -1 && WSAGetLastError() == WSAEINTR);
+#else
             do {
                 result = ::recv(endpoint, reinterpret_cast<char *>(buffer), length, noSignal);
             } while ((result == -1) && (detail::getLastError() == EINTR));
-        }
 #endif // defined(_WIN32) || defined(__CYGWIN__)
+        }
         if (result < 0) {
             switch (result) {
             case EWOULDBLOCK:
@@ -812,17 +820,15 @@ public:
             case WSAECONNABORTED:
             case WSAESHUTDOWN:
 #endif
-                this->close();
-                break;
             default:
+                this->close();
                 if (use_ssl) {
-                    throw SystemError(detail::mbedtls_get_strerror(static_cast<int>(result)), "Failed to read data");
+                    throw SystemError(tls::get_strerror(static_cast<int>(result)), "Failed to read data");
                 } else {
                     throw SystemError(detail::getLastError(), "Failed to read data");
                 }
             }
         }
-
         return static_cast<std::size_t>(result);
     }
 
@@ -861,10 +867,14 @@ private:
                              NULL,
                              (timeout >= 0) ? &select_timeout : NULL);
         } while ((count == -1) && (WSAGetLastError() == WSAEINTR));
-        if (count == -1)
+        if (count == -1) {
+            this->close();
             throw SystemError(detail::getLastError(), "Failed to select socket");
-        else if (count == 0)
+        }
+        if (count == 0) {
+            this->close();
             throw ResponseError("Request timed out");
+        }
 #else
         timeval select_timeout;
         select_timeout.tv_sec  = static_cast<time_t>(timeout / 1000);
@@ -876,10 +886,14 @@ private:
                              NULL,
                              (timeout >= 0) ? &select_timeout : NULL);
         } while ((count == -1) && (errno == EINTR));
-        if (count == -1)
+        if (count == -1) {
+            this->close();
             throw SystemError(detail::getLastError(), "Failed to select socket");
-        else if (count == 0)
+        }
+        if (count == 0) {
+            this->close();
             throw ResponseError("Request timed out");
+        }
 #endif // defined(_WIN32) || defined(__CYGWIN__)
     }
 
@@ -905,35 +919,35 @@ private:
 
     Type endpoint;
     InternetProtocol internet_protocol;
-    SSLContext sslctx;
+    tls::SSLContext sslctx;
     std::string certs;
     bool use_ssl;
 };
 
 // RFC 7230, 3.2.3. WhiteSpace
 template <typename C>
-bool isWhiteSpaceChar(const C c)
+inline bool isWhiteSpaceChar(const C c)
 {
     return c == 0x20 || c == 0x09; // space or tab
 }
 
 // RFC 7230, 3.2.3. WhiteSpace
 template <typename C>
-bool isNotWhiteSpaceChar(const C c)
+inline bool isNotWhiteSpaceChar(const C c)
 {
     return !isWhiteSpaceChar(c);
 }
 
 // RFC 5234, Appendix B.1. Core Rules
 template <typename C>
-bool isDigitChar(const C c)
+inline bool isDigitChar(const C c)
 {
     return c >= 0x30 && c <= 0x39; // 0 - 9
 }
 
 // RFC 5234, Appendix B.1. Core Rules
 template <typename C>
-bool isAlphaChar(const C c)
+inline bool isAlphaChar(const C c)
 {
     return (c >= 0x61 && c <= 0x7A) || // a - z
            (c >= 0x41 && c <= 0x5A);   // A - Z
@@ -941,7 +955,7 @@ bool isAlphaChar(const C c)
 
 // RFC 7230, 3.2.6. Field Value Components
 template <typename C>
-bool isTokenChar(const C c)
+inline bool isTokenChar(const C c)
 {
     return c == 0x21 || // !
            c == 0x23 || // #
@@ -964,20 +978,20 @@ bool isTokenChar(const C c)
 
 // RFC 5234, Appendix B.1. Core Rules
 template <typename C>
-bool isVisibleChar(const C c)
+inline bool isVisibleChar(const C c)
 {
     return c >= 0x21 && c <= 0x7E;
 }
 
 // RFC 7230, Appendix B. Collected ABNF
 template <typename C>
-bool isObsoleteTextChar(const C c)
+inline bool isObsoleteTextChar(const C c)
 {
     return static_cast<unsigned char>(c) >= 0x80 &&
            static_cast<unsigned char>(c) <= 0xFF;
 }
 
-Iterator skipWhiteSpaces(const Iterator begin, const Iterator end)
+inline Iterator skipWhiteSpaces(const Iterator begin, const Iterator end)
 {
     Iterator it = begin;
     for (it = begin; it != end; ++it)
@@ -988,14 +1002,14 @@ Iterator skipWhiteSpaces(const Iterator begin, const Iterator end)
 
 // RFC 5234, Appendix B.1. Core Rules
 template <typename T, typename C>
-T digitToUint(const C c)
+inline T digitToUint(const C c)
 {
     // DIGIT (0 - 9)
     return (c >= 0x30 && c <= 0x39) ? static_cast<T>(c - 0x30) : throw ResponseError("Invalid digit");
 }
 
 template <typename T>
-std::string numberToString(T Number)
+inline std::string numberToString(T Number)
 {
     std::ostringstream ss;
     ss << Number;
@@ -1004,7 +1018,7 @@ std::string numberToString(T Number)
 
 // RFC 5234, Appendix B.1. Core Rules
 template <typename T, typename C>
-T hexDigitToUint(const C c)
+inline T hexDigitToUint(const C c)
 {
     if (c >= 0x30 && c <= 0x39)
         return static_cast<T>(c - 0x30); // 0 - 9
@@ -1018,6 +1032,45 @@ T hexDigitToUint(const C c)
 inline char toLower(const char c)
 {
     return (c >= 'A' && c <= 'Z') ? c - ('A' - 'a') : c;
+}
+
+inline std::string &strToLower(std::string &s)
+{
+    std::transform(s.begin(), s.end(), s.begin(), detail::toLower);
+    return s;
+}
+
+// trim from start
+inline std::string &ltrim(std::string &s)
+{
+    s.erase(s.begin(), std::find_if(s.begin(), s.end(), std::not1(std::ptr_fun<int, int>(std::isspace))));
+    return s;
+}
+
+// trim from end
+inline std::string &rtrim(std::string &s)
+{
+    s.erase(std::find_if(s.rbegin(), s.rend(), std::not1(std::ptr_fun<int, int>(std::isspace))).base(), s.end());
+    return s;
+}
+
+// trim from both ends
+inline std::string &trim(std::string &s)
+{
+    return detail::ltrim(detail::rtrim(s));
+}
+
+/// @brief Searches the header field with the given name.
+/// @param header_fields the list of fields.
+/// @param field_name the name we are looking for.
+/// @return an iterator to the field, if one is found.
+inline HeaderFields::iterator findField(HeaderFields &header_fields, const std::string &field_name)
+{
+    HeaderFields::iterator field;
+    for (field = header_fields.begin(); field != header_fields.end(); ++field)
+        if (field->first == field_name)
+            break;
+    return field;
 }
 
 // RFC 3986, 3. Syntax Components
@@ -1162,26 +1215,6 @@ std::pair<Iterator, std::string> parseToken(const Iterator begin, const Iterator
     return std::make_pair(it, result);
 }
 
-// trim from start
-inline std::string &ltrim(std::string &s)
-{
-    s.erase(s.begin(), std::find_if(s.begin(), s.end(), std::not1(std::ptr_fun<int, int>(std::isspace))));
-    return s;
-}
-
-// trim from end
-inline std::string &rtrim(std::string &s)
-{
-    s.erase(std::find_if(s.rbegin(), s.rend(), std::not1(std::ptr_fun<int, int>(std::isspace))).base(), s.end());
-    return s;
-}
-
-// trim from both ends
-inline std::string &trim(std::string &s)
-{
-    return detail::ltrim(detail::rtrim(s));
-}
-
 // RFC 7230, 3.2. Header Fields
 
 inline std::pair<Iterator, std::string> parseFieldValue(const Iterator begin, const Iterator end)
@@ -1243,7 +1276,7 @@ std::pair<Iterator, HeaderField> parseHeaderField(const Iterator begin, const It
         throw ResponseError("Invalid header field (missing \\n) = " + field_name + ":" + field_value);
 
     // Transform the field name to lower-case letters.
-    std::transform(field_name.begin(), field_name.end(), field_name.begin(), detail::toLower);
+    detail::strToLower(field_name);
 
     // Return the field name and value.
     return std::make_pair(it, HeaderField(field_name, field_value));
@@ -1452,6 +1485,7 @@ public:
         // Make a copy and then free the other.
         addrinfo info = *_info;
         freeaddrinfo(_info);
+
         // Encode the request.
         const Data request_data = detail::encodeHtml(uri, method, body, header_fields);
         // Create the socket.
