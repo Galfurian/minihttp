@@ -35,14 +35,14 @@ find_package(mbedtls REQUIRED)
 # LIBRARY
 # -----------------------------------------------------------------------------
 # Add the C++ library.
-add_library(${PROJECT_NAME} INTERFACE)
-add_library(${PROJECT_NAME}::${PROJECT_NAME} ALIAS ${PROJECT_NAME})
+add_library(minihttp INTERFACE)
+add_library(minihttp::minihttp ALIAS minihttp)
 # Inlcude header directories.
-target_include_directories(${PROJECT_NAME} INTERFACE ${PROJECT_SOURCE_DIR}/include ${MBEDTLS_INCLUDE_DIRS})
+target_include_directories(minihttp INTERFACE ${PROJECT_SOURCE_DIR}/include ${MBEDTLS_INCLUDE_DIRS})
 # Link libraries.
-target_link_libraries(${PROJECT_NAME} INTERFACE mbedtls mbedx509 mbedcrypto)
+target_link_libraries(minihttp INTERFACE mbedtls mbedx509 mbedcrypto)
 if(WIN32)
-    target_link_libraries(${PROJECT_NAME} INTERFACE ws2_32)
+    target_link_libraries(minihttp INTERFACE ws2_32)
 endif()
 
 # -----------------------------------------------------------------------------
@@ -50,13 +50,13 @@ endif()
 # -----------------------------------------------------------------------------
 if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
     # Disable warnings that suggest using MSVC-specific safe functions
-    target_compile_definitions(${PROJECT_NAME} INTERFACE _CRT_SECURE_NO_WARNINGS)
+    target_compile_definitions(minihttp INTERFACE _CRT_SECURE_NO_WARNINGS)
     if(WARNINGS_AS_ERRORS)
-        target_compile_options(${PROJECT_NAME} INTERFACE /WX)
+        target_compile_options(minihttp INTERFACE /WX)
     endif()
 elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     if(WARNINGS_AS_ERRORS)
-        target_compile_options(${PROJECT_NAME} INTERFACE -Werror)
+        target_compile_options(minihttp INTERFACE -Werror)
     endif()
 endif()
 
@@ -64,14 +64,14 @@ if(STRICT_WARNINGS)
     if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
         # Mark system headers as external for MSVC explicitly
         # https://devblogs.microsoft.com/cppblog/broken-warnings-theory
-        target_compile_options(${PROJECT_NAME} INTERFACE /experimental:external)
-        target_compile_options(${PROJECT_NAME} INTERFACE /external:I ${CMAKE_BINARY_DIR})
-        target_compile_options(${PROJECT_NAME} INTERFACE /external:anglebrackets)
-        target_compile_options(${PROJECT_NAME} INTERFACE /external:W0)
+        target_compile_options(minihttp INTERFACE /experimental:external)
+        target_compile_options(minihttp INTERFACE /external:I ${CMAKE_BINARY_DIR})
+        target_compile_options(minihttp INTERFACE /external:anglebrackets)
+        target_compile_options(minihttp INTERFACE /external:W0)
 
-        target_compile_options(${PROJECT_NAME} INTERFACE /W4)
+        target_compile_options(minihttp INTERFACE /W4)
     elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-        target_compile_options(${PROJECT_NAME} INTERFACE -Wall -Wextra -Wconversion -pedantic)
+        target_compile_options(minihttp INTERFACE -Wall -Wextra -Wconversion -pedantic)
     endif()
 endif()
 
@@ -101,8 +101,7 @@ if(DOXYGEN_FOUND)
         ${doxygenawesome_SOURCE_DIR}/doxygen-awesome-paragraph-link.js
         ${doxygenawesome_SOURCE_DIR}/doxygen-awesome-darkmode-toggle.js
     )
-
-    doxygen_add_docs(${PROJECT_NAME}_documentation
+    doxygen_add_docs(minihttp_documentation
         include/minihttp.hpp
         README.md
     )
