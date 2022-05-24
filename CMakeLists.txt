@@ -17,7 +17,7 @@ project(minihttp CXX)
 include(FetchContent)
 
 # Extend the CMake module path.
-set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/")
+set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${PROJECT_SOURCE_DIR}/cmake/")
 
 # -----------------------------------------------------------------------------
 # Add options.
