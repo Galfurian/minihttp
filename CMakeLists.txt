@@ -16,6 +16,12 @@ project(minihttp CXX)
 # Extend the CMake module path.
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${PROJECT_SOURCE_DIR}/cmake/")
 
+# Set the default build type to Debug.
+if(NOT CMAKE_BUILD_TYPE)
+    message(STATUS "Setting build type to 'Debug' as none was specified.")
+    set(CMAKE_BUILD_TYPE "Debug" CACHE STRING "Choose the type of build." FORCE)
+endif()
+
 # -----------------------------------------------------------------------------
 # ENABLE FETCH CONTENT
 # -----------------------------------------------------------------------------
@@ -93,6 +99,49 @@ if(${PROJECT_NAME}_STRICT_WARNINGS)
 endif()
 
 # -----------------------------------------------------------------------------
+# EXAMPLES
+# -----------------------------------------------------------------------------
+
+if(${PROJECT_NAME}_BUILD_EXAMPLES)
+        
+    # Retrieve the source.
+    FetchContent_Declare(json
+    GIT_REPOSITORY "https://github.com/Galfurian/json.git"
+    GIT_TAG main
+    GIT_SHALLOW TRUE
+    GIT_PROGRESS TRUE
+    )
+    # Retrieve the properties related to the content.
+    FetchContent_GetProperties(json)
+    # If not populated, make the content available.
+    if(NOT json_POPULATED)
+    message(STATUS "Retrieving `json`...")
+    # Ensures the named dependencies have been populated.
+    FetchContent_MakeAvailable(json)
+    # Hide fetchcontent variables, otherwise with ccmake it's a mess.
+    mark_as_advanced(FORCE
+        FETCHCONTENT_UPDATES_DISCONNECTED_JSON
+        FETCHCONTENT_SOURCE_DIR_JSON
+    )
+    endif(NOT json_POPULATED)
+
+    # = TARGETS ===============================================================
+
+    add_executable(${PROJECT_NAME}_example ${PROJECT_SOURCE_DIR}/examples/example.cpp)
+    target_link_libraries(${PROJECT_NAME}_example PUBLIC ${PROJECT_NAME})
+    target_include_directories(${PROJECT_NAME}_example PUBLIC ${PROJECT_SOURCE_DIR}/include)
+    
+    add_executable(${PROJECT_NAME}_get_example ${PROJECT_SOURCE_DIR}/examples/get_example.cpp)
+    target_link_libraries(${PROJECT_NAME}_get_example PUBLIC ${PROJECT_NAME})
+    target_include_directories(${PROJECT_NAME}_get_example PUBLIC ${PROJECT_SOURCE_DIR}/include)
+    
+    add_executable(${PROJECT_NAME}_post_example ${PROJECT_SOURCE_DIR}/examples/post_example.cpp)
+    target_link_libraries(${PROJECT_NAME}_post_example PUBLIC ${PROJECT_NAME} json)
+    target_include_directories(${PROJECT_NAME}_post_example PUBLIC ${PROJECT_SOURCE_DIR}/include ${json_SOURCE_DIR}/include)
+
+endif()
+
+# -----------------------------------------------------------------------------
 # DOCUMENTATION
 # -----------------------------------------------------------------------------
 if(DOXYGEN_FOUND)
@@ -118,6 +167,7 @@ if(DOXYGEN_FOUND)
     endif()
 
     # = CUSTOMIZATION =========================================================
+    set(DOXYGEN_WARN_FORMAT "$file:$line: $text")
     set(DOXYGEN_PROJECT_NAME ${PROJECT_NAME})
     set(DOXYGEN_USE_MDFILE_AS_MAINPAGE ${PROJECT_SOURCE_DIR}/README.md)
     set(DOXYGEN_SHOW_INCLUDE_FILES NO)
@@ -134,11 +184,4 @@ if(DOXYGEN_FOUND)
         ${PROJECT_SOURCE_DIR}/README.md
         ${PROJECT_SOURCE_DIR}/include/minihttp/minihttp.hpp
     )
-endif()
-
-# -----------------------------------------------------------------------------
-# Examples
-# -----------------------------------------------------------------------------
-if(${PROJECT_NAME}_BUILD_EXAMPLES)
-    add_subdirectory(example)
 endif()
