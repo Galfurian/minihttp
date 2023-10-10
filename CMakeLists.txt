@@ -17,23 +17,26 @@ project(minihttp CXX)
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${PROJECT_SOURCE_DIR}/cmake/")
 
 # -----------------------------------------------------------------------------
-# Add options.
-# -----------------------------------------------------------------------------
-option(MINIHTTP_STRICT_WARNINGS "Enable strict compiler warnings" ON)
-option(MINIHTTP_WARNINGS_AS_ERRORS "Treat all warnings as errors" OFF)
-option(MINIHTTP_BUILD_EXAMPLES "Build examples" OFF)
-
-# -----------------------------------------------------------------------------
 # ENABLE FETCH CONTENT
 # -----------------------------------------------------------------------------
 
 # We need this in order to import external projects.
 include(FetchContent)
-
 # Hide fetchcontent variables.
 mark_as_advanced(FORCE
-    FETCHCONTENT_QUIET FETCHCONTENT_BASE_DIR FETCHCONTENT_FULLY_DISCONNECTED FETCHCONTENT_UPDATES_DISCONNECTED
+    FETCHCONTENT_QUIET
+    FETCHCONTENT_BASE_DIR
+    FETCHCONTENT_FULLY_DISCONNECTED
+    FETCHCONTENT_UPDATES_DISCONNECTED
 )
+
+# -----------------------------------------------------------------------------
+# OPTIONS
+# -----------------------------------------------------------------------------
+
+option(${PROJECT_NAME}_STRICT_WARNINGS "Enable strict compiler warnings" ON)
+option(${PROJECT_NAME}_WARNINGS_AS_ERRORS "Treat all warnings as errors" OFF)
+option(${PROJECT_NAME}_BUILD_EXAMPLES "Build examples" OFF)
 
 # -----------------------------------------------------------------------------
 # DEPENDENCIES
@@ -65,16 +68,16 @@ endif()
 if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
     # Disable warnings that suggest using MSVC-specific safe functions
     target_compile_definitions(${PROJECT_NAME} INTERFACE _CRT_SECURE_NO_WARNINGS)
-    if(MINIHTTP_WARNINGS_AS_ERRORS)
+    if(${PROJECT_NAME}_WARNINGS_AS_ERRORS)
         target_compile_options(${PROJECT_NAME} INTERFACE /WX)
     endif()
 elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-    if(MINIHTTP_WARNINGS_AS_ERRORS)
+    if(${PROJECT_NAME}_WARNINGS_AS_ERRORS)
         target_compile_options(${PROJECT_NAME} INTERFACE -Werror)
     endif()
 endif()
 
-if(MINIHTTP_STRICT_WARNINGS)
+if(${PROJECT_NAME}_STRICT_WARNINGS)
     if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
         # Mark system headers as external for MSVC explicitly
         # https://devblogs.microsoft.com/cppblog/broken-warnings-theory
@@ -115,8 +118,8 @@ if(DOXYGEN_FOUND)
     endif()
 
     # = CUSTOMIZATION =========================================================
-    set(DOXYGEN_PROJECT_NAME "JSON Parser/Writer Library")
-    set(DOXYGEN_USE_MDFILE_AS_MAINPAGE README.md)
+    set(DOXYGEN_PROJECT_NAME ${PROJECT_NAME})
+    set(DOXYGEN_USE_MDFILE_AS_MAINPAGE ${PROJECT_SOURCE_DIR}/README.md)
     set(DOXYGEN_SHOW_INCLUDE_FILES NO)
     set(DOXYGEN_GENERATE_TREEVIEW YES)
     set(DOXYGEN_HTML_HEADER ${doxygenawesome_SOURCE_DIR}/doxygen-custom/header.html)
@@ -136,6 +139,6 @@ endif()
 # -----------------------------------------------------------------------------
 # Examples
 # -----------------------------------------------------------------------------
-if(MINIHTTP_BUILD_EXAMPLES)
+if(${PROJECT_NAME}_BUILD_EXAMPLES)
     add_subdirectory(example)
 endif()
