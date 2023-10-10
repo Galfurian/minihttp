@@ -1,7 +1,7 @@
 #include <iostream>
 #include <fstream>
 
-#include "minihttp.hpp"
+#include "minihttp/minihttp.hpp"
 #include "discord.hpp"
 
 int main(int argc, const char *argv[])
@@ -12,6 +12,7 @@ int main(int argc, const char *argv[])
         return 1;
     }
 
+#if 0
     discord::Message message{
         "Webhook",
         "https://i.imgur.com/4M34hi2.png",
@@ -49,9 +50,13 @@ int main(int argc, const char *argv[])
                 "Woah! So cool! :smirk:",
                 "https://i.imgur.com/fKL31aD.jpg" } } }
     };
-
     json::jnode_t jroot;
     jroot << message;
+#else
+    json::jnode_t jroot;
+    jroot.set_type(json::JOBJECT);
+    jroot["content"] << "test";
+#endif
 
     try {
         std::string uri    = argv[1];

@@ -1,7 +1,7 @@
 #include <iostream>
 #include <fstream>
 
-#include "minihttp.hpp"
+#include "minihttp/minihttp.hpp"
 
 int main(int argc, const char *argv[])
 {
